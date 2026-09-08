@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <rect fill="#E07A3D" width="800" height="600"/>
+  <circle cx="400" cy="260" r="90" fill="#fff" opacity=".18"/>
+  <circle cx="360" cy="280" r="73" fill="#fff" opacity=".92"/><circle cx="430" cy="300" r="56" fill="#E8F5C8" opacity=".95"/><ellipse cx="400" cy="200" rx="18" ry="36" fill="#2F8A5B" transform="rotate(-20 400 200)"/><circle cx="310" cy="360" r="40" fill="#fff" opacity=".55"/>
+  <text x="400" y="520" text-anchor="middle" fill="#fff" font-size="40" font-family="PingFang SC, Noto Sans SC, sans-serif">生鲜</text>
+</svg>

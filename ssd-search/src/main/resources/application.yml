@@ -1,0 +1,26 @@
+server:
+  port: 18085
+
+ssd:
+  mode: ${SSD_MODE:auto}
+  jwt:
+    secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  es:
+    url: http://127.0.0.1:9210
+  canal:
+    host: 127.0.0.1
+    port: 11111
+  search:
+    reconcile-ms: 60000
+
+spring:
+  application:
+    name: ssd-search
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3316/ssd_account?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    username: shansuda
+    password: shansuda
+    hikari:
+      connection-timeout: 8000
+      maximum-pool-size: 4
+      initialization-fail-timeout: -1

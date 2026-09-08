@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8B5A2B"/>
+      <stop offset="1" stop-color="#C4894A"/>
+    </linearGradient>
+  </defs>
+  <rect fill="url(#bg)" width="800" height="600"/>
+  <circle cx="196" cy="120" r="110" fill="#fff" opacity=".12"/>
+  <circle cx="604" cy="500" r="140" fill="#FFE4C4" opacity=".18"/>
+  <rect x="290" y="240" width="220" height="170" rx="28" fill="#fff" opacity=".94"/><ellipse cx="400" cy="240" rx="110" ry="28" fill="#FFE4C4"/><path d="M510 280 C580 280 580 370 510 370" fill="none" stroke="#fff" stroke-width="18"/><ellipse cx="400" cy="420" rx="90" ry="16" fill="#fff" opacity=".4"/>
+  <text x="400" y="545" text-anchor="middle" fill="#fff" font-size="34" font-family="PingFang SC, Noto Sans SC, sans-serif">下午茶</text>
+</svg>

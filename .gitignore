@@ -1,0 +1,11 @@
+target/
+.idea/
+*.iml
+.DS_Store
+node_modules/
+frontend/dist/
+*.log
+.mvn/
+.env
+application-local.yml
+data/

@@ -1,0 +1,61 @@
+dataSources:
+  ds0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_0?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    username: shansuda
+    password: shansuda
+    connectionTimeout: 8000
+    maximumPoolSize: 4
+  ds1:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_1?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    username: shansuda
+    password: shansuda
+    connectionTimeout: 8000
+    maximumPoolSize: 4
+  ds2:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_2?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    username: shansuda
+    password: shansuda
+    connectionTimeout: 8000
+    maximumPoolSize: 4
+  ds3:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_3?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    username: shansuda
+    password: shansuda
+    connectionTimeout: 8000
+    maximumPoolSize: 4
+
+rules:
+  - !SHARDING
+    tables:
+      t_order:
+        actualDataNodes: ds$->{0..3}.t_order_$->{0..7}
+        databaseStrategy:
+          standard:
+            shardingColumn: id
+            shardingAlgorithmName: order-db-algo
+        tableStrategy:
+          standard:
+            shardingColumn: id
+            shardingAlgorithmName: order-table-algo
+    shardingAlgorithms:
+      order-db-algo:
+        type: CLASS_BASED
+        props:
+          strategy: STANDARD
+          algorithmClassName: com.shansuda.order.shard.OrderDatabaseShardingAlgorithm
+      order-table-algo:
+        type: CLASS_BASED
+        props:
+          strategy: STANDARD
+          algorithmClassName: com.shansuda.order.shard.OrderTableShardingAlgorithm
+
+props:
+  sql-show: true

@@ -1,0 +1,50 @@
+server:
+  port: 18080
+
+ssd:
+  jwt:
+    secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+
+spring:
+  application:
+    name: ssd-gateway
+  codec:
+    max-in-memory-size: 8MB
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 8000
+        response-timeout: 30s
+      routes:
+        - id: grab
+          uri: http://127.0.0.1:18082
+          predicates:
+            - Path=/api/orders/*/grab
+        - id: auth-account
+          uri: http://127.0.0.1:18081
+          predicates:
+            - Path=/api/auth/**, /api/me, /api/me/**, /api/avatars/**, /api/review-photos, /api/review-photos/**, /api/map/**, /api/riders/me/**, /api/riders/*/profile, /api/merchants/**, /api/coupons/**, /api/reviews/**, /api/member, /api/member/**
+        - id: merchant-stats
+          uri: http://127.0.0.1:18083
+          predicates:
+            - Path=/api/merchant/**
+        - id: rider-stats
+          uri: http://127.0.0.1:18083
+          predicates:
+            - Path=/api/rider/**
+        - id: activity
+          uri: http://127.0.0.1:18082
+          predicates:
+            - Path=/api/activities/**
+        - id: nearby
+          uri: http://127.0.0.1:18081
+          predicates:
+            - Path=/api/riders/nearby
+        - id: order
+          uri: http://127.0.0.1:18083
+          predicates:
+            - Path=/api/orders/**
+        - id: dispatch
+          uri: http://127.0.0.1:18083
+          predicates:
+            - Path=/api/dispatch/**

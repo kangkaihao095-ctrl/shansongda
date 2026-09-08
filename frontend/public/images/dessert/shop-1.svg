@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E07A9A"/>
+      <stop offset="1" stop-color="#F3B6C8"/>
+    </linearGradient>
+  </defs>
+  <rect fill="url(#bg)" width="800" height="600"/>
+  <circle cx="160" cy="120" r="110" fill="#fff" opacity=".12"/>
+  <circle cx="640" cy="500" r="140" fill="#FFF1F5" opacity=".18"/>
+  <rect x="280" y="236" width="240" height="160" rx="18" fill="#fff" opacity=".92"/><rect x="300" y="216" width="200" height="40" rx="12" fill="#FFF1F5"/><circle cx="400" cy="206" r="16" fill="#C43D2F"/><rect x="310" y="300" width="40" height="70" fill="#E07A9A" opacity=".35"/><rect x="370" y="300" width="40" height="70" fill="#E07A9A" opacity=".25"/><rect x="430" y="300" width="40" height="70" fill="#E07A9A" opacity=".35"/>
+  <text x="400" y="545" text-anchor="middle" fill="#fff" font-size="34" font-family="PingFang SC, Noto Sans SC, sans-serif">甜点</text>
+</svg>

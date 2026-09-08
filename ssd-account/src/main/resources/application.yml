@@ -1,0 +1,44 @@
+server:
+  port: 18081
+
+ssd:
+  jwt:
+    secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  avatar:
+    dir: data/avatars
+  review-photos:
+    dir: data/review-photos
+  rider:
+    max-work-hours: ${SSD_RIDER_MAX_WORK_HOURS:8}
+    daily-subsidy-cents: ${SSD_RIDER_DAILY_SUBSIDY_CENTS:1500}
+    complete-subsidy-cents: ${SSD_RIDER_COMPLETE_SUBSIDY_CENTS:200}
+  amap:
+    key: ${SSD_AMAP_KEY:}
+  recommend:
+    max-km: ${SSD_RECOMMEND_MAX_KM:5}
+  client:
+    order: http://127.0.0.1:18083
+
+spring:
+  application:
+    name: ssd-account
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 2MB
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3316/ssd_account?useSSL=false&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&connectTimeout=8000&socketTimeout=60000&rewriteBatchedStatements=true
+    username: shansuda
+    password: shansuda
+    hikari:
+      connection-timeout: 8000
+      validation-timeout: 3000
+      maximum-pool-size: 6
+      minimum-idle: 1
+      initialization-fail-timeout: -1
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate.dialect: org.hibernate.dialect.MySQLDialect

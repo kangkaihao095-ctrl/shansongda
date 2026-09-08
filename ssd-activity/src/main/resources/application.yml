@@ -1,0 +1,47 @@
+server:
+  port: 18082
+
+ssd:
+  mode: ${SSD_MODE:auto}
+  jwt:
+    secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  seckill:
+    merchant-id: 3
+    rotate-minutes: ${SSD_SECKILL_ROTATE_MINUTES:10}
+  client:
+    order: http://127.0.0.1:18083
+    account: http://127.0.0.1:18081
+
+spring:
+  application:
+    name: ssd-activity
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3316/ssd_activity?useSSL=false&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&connectTimeout=8000&socketTimeout=20000
+    username: shansuda
+    password: shansuda
+    hikari:
+      connection-timeout: 8000
+      maximum-pool-size: 6
+      minimum-idle: 1
+      initialization-fail-timeout: -1
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate.dialect: org.hibernate.dialect.MySQLDialect
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6389
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5682
+    username: shansuda
+    password: shansuda
+
+redisson:
+  single-server-config:
+    address: redis://127.0.0.1:6389
+    connection-minimum-idle-size: 1
+    connection-pool-size: 8

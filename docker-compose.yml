@@ -1,0 +1,79 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ssd-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: shansuda
+      MYSQL_USER: shansuda
+      MYSQL_PASSWORD: shansuda
+    ports:
+      - "3316:3306"
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --server-id=1
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --binlog-row-image=FULL
+      --default-authentication-plugin=mysql_native_password
+    volumes:
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ushansuda", "-pshansuda"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: ssd-redis
+    ports:
+      - "6389:6379"
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: ssd-rabbitmq
+    ports:
+      - "5682:5672"
+      - "15682:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: shansuda
+      RABBITMQ_DEFAULT_PASS: shansuda
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: ssd-es
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9210:9200"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+  neo4j:
+    image: neo4j:5.18
+    container_name: ssd-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/shansuda
+      NEO4J_PLUGINS: '["graph-data-science"]'
+      NEO4J_dbms_security_procedures_unrestricted: gds.*
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
+
+  canal:
+    image: canal/canal-server:v1.1.8
+    container_name: ssd-canal
+    ports:
+      - "11111:11111"
+    volumes:
+      - ./docker/canal/canal.properties:/home/admin/canal-server/conf/canal.properties
+      - ./docker/canal/instance.properties:/home/admin/canal-server/conf/example/instance.properties
+    depends_on:
+      mysql:
+        condition: service_healthy

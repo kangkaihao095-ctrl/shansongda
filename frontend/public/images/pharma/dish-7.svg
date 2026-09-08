@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1F7A4D"/>
+      <stop offset="1" stop-color="#3DAA72"/>
+    </linearGradient>
+  </defs>
+  <rect fill="url(#bg)" width="800" height="600"/>
+  <circle cx="160" cy="168" r="110" fill="#fff" opacity=".12"/>
+  <circle cx="640" cy="452" r="140" fill="#E8FFF2" opacity=".18"/>
+  <rect x="340" y="180" width="120" height="240" rx="20" fill="#fff"/><rect x="280" y="240" width="240" height="120" rx="20" fill="#fff"/><rect x="372" y="210" width="56" height="180" rx="8" fill="#1F7A4D"/><rect x="310" y="270" width="180" height="56" rx="8" fill="#1F7A4D"/>
+  <text x="400" y="545" text-anchor="middle" fill="#fff" font-size="34" font-family="PingFang SC, Noto Sans SC, sans-serif">医药</text>
+</svg>

@@ -1,0 +1,24 @@
+server:
+  port: 18084
+
+ssd:
+  mode: ${SSD_MODE:auto}
+  jwt:
+    secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  neo4j:
+    uri: bolt://127.0.0.1:7687
+    username: neo4j
+    password: shansuda
+  dispatch:
+    congestion-ms: 60000
+  client:
+    order: http://127.0.0.1:18083
+    activity: http://127.0.0.1:18082
+    account: http://127.0.0.1:18081
+
+spring:
+  application:
+    name: ssd-dispatch
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.neo4j.Neo4jAutoConfiguration

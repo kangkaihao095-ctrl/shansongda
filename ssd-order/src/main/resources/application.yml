@@ -1,0 +1,33 @@
+server:
+  port: 18083
+
+ssd:
+  jwt:
+    secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  leaf:
+    url: jdbc:mysql://127.0.0.1:3316/ssd_leaf?useSSL=false&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&connectTimeout=8000&socketTimeout=20000
+    username: shansuda
+    password: shansuda
+  client:
+    account: http://127.0.0.1:18081
+    activity: http://127.0.0.1:18082
+  recommend:
+    max-km: ${SSD_RECOMMEND_MAX_KM:5}
+
+spring:
+  application:
+    name: ssd-order
+  datasource:
+    driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
+    url: jdbc:shardingsphere:classpath:shardingsphere.yaml
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate.dialect: org.hibernate.dialect.MySQLDialect
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5682
+    username: shansuda
+    password: shansuda
