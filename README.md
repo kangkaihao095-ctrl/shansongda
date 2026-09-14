@@ -176,12 +176,14 @@ mvn -pl ssd-search -am spring-boot:run
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `SSD_JWT_SECRET` | `change-me-in-prod-please-32chars` | JWT 密钥，各服务须一致，长度 ≥ 32 |
+| `SSD_JWT_SECRET` | `change-me-in-prod-please-32chars` | JWT 密钥，各服务须一致，长度 ≥ 32。**生产必须改**，不要把生产密钥写入仓库 |
+| `SSD_INTERNAL_TOKEN` | `ssd-internal-local` | 服务间内部 token。**生产必须改**，不要把生产密钥写入仓库 |
 | `SSD_MODE` | `auto` | `auto` / `live` / `dry-run` |
 | `SSD_AMAP_KEY` | 空 | 有则前端走高德 JS API |
 | `SSD_RIDER_MAX_WORK_HOURS` | `8` | 骑手当日在线工时上限（小时） |
 | `SSD_SECKILL_ROTATE_MINUTES` | `10` | 秒杀展示 SKU 轮换间隔 |
 | `SSD_RECOMMEND_MAX_KM` | `5` | 推荐过滤与结算超距半径（千米） |
+| `SSD_MERCHANT_ACCEPT_TIMEOUT_MIN` | `15` | 商家待接单超时（分钟），超时自动接单或打烊退款 |
 
 端口一览：
 
@@ -209,7 +211,7 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status）
 - `DELIVERING` 不可直接取消
 - `COMPLETED` / `CANCELLED` / `REFUNDED` 为终态
 
-运费策略：`DistanceFreight`（商家→用户直线距离分档）、`PeakFreight`（高峰在距离运费上乘系数）。违约策略按当前状态计 `penalty_cents`；配送中取消返回 409。
+运费策略：`DistanceFreight`（商家→用户直线距离分档）、`PeakFreight`（高峰在距离运费上乘系数）、`MemberFreight`（Lv3+ 减 2 元、年卡再减 1 元，下限 0）。违约策略按当前状态计 `penalty_cents`；配送中取消返回 409。券只抵商品、不抵运费。
 
 ## 活动链路
 
