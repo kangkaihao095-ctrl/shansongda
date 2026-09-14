@@ -4,7 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { CATEGORIES, categoryName } from '../catalog'
 import { api } from '../api'
 import { imgSrc, onImgError } from '../img'
+import { shopIsOpen } from '../merchant'
 import { goBack, toast } from '../session'
+import EmptyState from '../components/EmptyState.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,29 +45,29 @@ watch(() => route.params.key, () => {
   <div class="phone page">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router, '/home')">← 返回</button>
-      <b>{{ cat?.name || categoryName(route.params.key) }}</b>
+      <b class="page-title" style="font-size:18px">{{ cat?.name || categoryName(route.params.key) }}</b>
     </header>
     <div class="phone-body no-tab pad">
-      <img v-if="cat" :src="cat.image" alt="" :data-seed="'cat-banner-' + cat.key" :data-category="cat.key" @error="onImgError" style="width:100%;height:140px;object-fit:cover;border-radius:18px;margin-bottom:14px" />
       <article v-for="m in merchants" :key="m.id" class="store" @click="router.push('/shops/' + m.id)">
-        <div class="store-cover">
+        <div class="store-cover" :class="{ 'is-off': !shopIsOpen(m) }">
           <img class="store-cover-img" :src="imgSrc(m.coverUrl, m.category || route.params.key || 'food', 'shop-' + m.id, 'shop')" :data-seed="'shop-' + m.id" :data-category="m.category || route.params.key" alt="" @error="onImgError" />
-          {{ m.shopName }}
-          <span v-if="m.open === false || m.onlineStatus === 'OFFLINE'" class="cover-tag">休息中</span>
+          <span v-if="!shopIsOpen(m)" class="cover-tag">休息中</span>
           <span v-else-if="m.inRange === false" class="cover-tag">超配送范围</span>
         </div>
         <div class="store-body">
-          <b>{{ m.shopName }}</b>
-          <div class="muted">{{ m.address }}{{ m.distanceKm != null ? ' · ' + m.distanceKm + ' km' : '' }}</div>
-          <span v-if="m.open === false || m.onlineStatus === 'OFFLINE'" class="pill off">休息中</span>
-          <span v-else-if="m.inRange === false" class="pill off">超配送范围不可下单</span>
-          <span v-else class="pill">{{ (m.rating || 4.8) }} 分</span>
+          <div class="store-name">{{ m.shopName }}</div>
+          <div class="store-meta">
+            <span class="score">{{ (m.rating || 4.8) }} 分</span>
+            <span v-if="m.distanceKm != null">{{ m.distanceKm }} km</span>
+            <span v-if="!shopIsOpen(m)">休息中</span>
+            <span v-else-if="m.inRange === false">超配送范围</span>
+          </div>
         </div>
       </article>
       <button v-if="hasNext" class="btn ghost" style="width:100%;margin-bottom:16px" :disabled="loading" @click="load(false)">
         {{ loading ? '加载中…' : '加载更多' }}
       </button>
-      <p v-if="!merchants.length && !loading" class="muted">该分类暂时没有店铺</p>
+      <EmptyState v-if="!merchants.length && !loading" title="该分类暂时没有店铺" hint="换个品类或回到首页看看推荐" />
     </div>
   </div>
 </template>

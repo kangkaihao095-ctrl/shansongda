@@ -16,15 +16,22 @@ import com.shansuda.common.mq.SeckillSuccessMessage;
 import com.shansuda.order.client.AccountClient;
 import com.shansuda.order.client.ActivityClient;
 import com.shansuda.order.domain.DeliveryOrder;
-import com.shansuda.order.route.RouteService;
+import com.shansuda.order.fulfill.MerchantAcceptPolicy;
 import com.shansuda.order.fulfill.OrderAccess;
 import com.shansuda.order.fulfill.OrderStateMachine;
 import com.shansuda.order.leaf.LeafAllocator;
 import com.shansuda.order.query.OrderSearch;
+import com.shansuda.order.query.SkuSnapshot;
 import com.shansuda.order.repo.OrderRepo;
+import com.shansuda.order.route.AlongWay;
+import com.shansuda.order.route.RoutePathCache;
+import com.shansuda.order.route.RouteService;
+import com.shansuda.order.strategy.DispatchRank;
 import com.shansuda.order.strategy.FreightSelector;
 import com.shansuda.order.strategy.FreightStrategy;
+import com.shansuda.order.strategy.MemberFreight;
 import com.shansuda.order.stats.MerchantReport;
+import com.shansuda.order.stats.MerchantStatDayStore;
 import com.shansuda.order.stats.MerchantStatsAggregator;
 import com.shansuda.order.strategy.PenaltyStrategy;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -38,15 +45,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -63,13 +74,22 @@ public class OrderService {
     private final RabbitTemplate rabbitTemplate;
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbc;
+    private static final int HALL_ROUTE_TOP_K = 8;
+    private static final int LIST_ETA_TOP_K = 20;
+    private static final int ASSIGN_GDS_TOP = 5;
+    private static final Set<String> LIVE_ETA_STATUS = Set.of("PAID", "ACCEPTED", "ARRIVED", "DELIVERING");
+
+    private final MerchantStatDayStore statDayStore;
     private final double maxKm;
+    private final int acceptTimeoutMin;
 
     public OrderService(OrderRepo orderRepo, LeafAllocator leafAllocator, AccountClient accountClient,
                         RouteService routeService, ObjectProvider<ActivityClient> activityClient,
                         FreightSelector freightSelector,
                         RabbitTemplate rabbitTemplate, ObjectMapper objectMapper, DataSource dataSource,
-                        @Value("${ssd.recommend.max-km:5}") double maxKm) {
+                        MerchantStatDayStore statDayStore,
+                        @Value("${ssd.recommend.max-km:5}") double maxKm,
+                        @Value("${ssd.order.merchant-accept-timeout-min:15}") int acceptTimeoutMin) {
         this.orderRepo = orderRepo;
         this.leafAllocator = leafAllocator;
         this.accountClient = accountClient;
@@ -79,7 +99,9 @@ public class OrderService {
         this.rabbitTemplate = rabbitTemplate;
         this.objectMapper = objectMapper;
         this.jdbc = new JdbcTemplate(dataSource);
+        this.statDayStore = statDayStore;
         this.maxKm = maxKm <= 0 ? Geo.DEFAULT_MAX_KM : maxKm;
+        this.acceptTimeoutMin = acceptTimeoutMin <= 0 ? 15 : acceptTimeoutMin;
     }
 
     @Transactional
@@ -92,9 +114,14 @@ public class OrderService {
         return buildQuote(merchantId, addressId, items, couponId, clientPayCents, false);
     }
 
-    @Transactional
     public Map<String, Object> create(long merchantId, long addressId, List<Map<String, Object>> items,
                                       Long couponId, Integer clientPayCents) {
+        return create(merchantId, addressId, items, couponId, clientPayCents, null);
+    }
+
+    @Transactional
+    public Map<String, Object> create(long merchantId, long addressId, List<Map<String, Object>> items,
+                                      Long couponId, Integer clientPayCents, String expectDeliverAt) {
         AuthUser user = AuthHolder.require();
         Map<String, Object> quote = buildQuote(merchantId, addressId, items, couponId, clientPayCents, true);
         @SuppressWarnings("unchecked")
@@ -112,6 +139,7 @@ public class OrderService {
                 "ORDER:" + user.userId() + ":" + UUID.randomUUID());
         order.setPayAmountCents(((Number) quote.get("payCents")).intValue());
         order.setPayStatus("UNPAID");
+        order.setExpectDeliverAt(parseExpectDeliverAt(expectDeliverAt));
         List<Map<String, Object>> stockItems = shopStockItems(quote.get("snapshot"));
         boolean deducted = applyShopStock("deduct", stockItems);
         try {
@@ -142,7 +170,7 @@ public class OrderService {
         double ulat = 31.2240;
         double ulon = 121.4690;
         Instant now = Instant.now();
-        FreightStrategy strategy = freightSelector.select(now);
+        FreightStrategy strategy = freightSelector.select(now, loadMemberContext(msg.userId()));
         String snapshot = writeJson(Map.of(
                 "items", List.of(Map.of(
                         "skuId", msg.skuId(),
@@ -211,6 +239,7 @@ public class OrderService {
         orderRepo.save(order);
         rabbitTemplate.convertAndSend(MqNames.ORDER_EXCHANGE, MqNames.ORDER_PAID,
                 new OrderPaidMessage(order.getId(), order.getUserId(), order.getMerchantId()));
+        statDayStore.onPaid(order.getMerchantId(), nzInt(order.getPayAmountCents()), order.getPaidAt());
         tryAutoAccept(order.getId());
         return view(orderRepo.findById(order.getId()).orElse(order));
     }
@@ -276,10 +305,13 @@ public class OrderService {
             releaseRider(order);
             restoreShopStock(order);
             notifyMemberSpend(order.getUserId(), -nzInt(order.getPayAmountCents()), wasCompleted);
+            statDayStore.onRefunded(order.getMerchantId(), nzInt(order.getPayAmountCents()), Instant.now());
         } else {
-            OrderStateMachine.rejectRefund(order.getStatus());
             order.setRefundRejectReason(reasonText == null || reasonText.isBlank() ? "商家未同意退款" : reasonText.trim());
-            order.setStatus(order.getResumeStatus() == null ? "PAID" : order.getResumeStatus());
+            order.setStatus(OrderStateMachine.rejectRefund(order.getStatus()));
+            touch(order);
+            orderRepo.saveAndFlush(order);
+            order.setStatus(OrderStateMachine.resumeAfterReject(order.getStatus(), order.getResumeStatus()));
             order.setPayStatus("PAID");
         }
         touch(order);
@@ -294,6 +326,7 @@ public class OrderService {
         if (!auth.isMerchant() || order.getMerchantId() != auth.userId()) {
             throw BizException.forbidden("仅本店商家可接单");
         }
+        requireShopOpenForAccept(order.getMerchantId());
         order.setStatus(OrderStateMachine.merchantAccept(order.getStatus()));
         touch(order);
         orderRepo.save(order);
@@ -370,6 +403,7 @@ public class OrderService {
         }
         notifyMemberSpend(order.getUserId(), nzInt(order.getPayAmountCents()), true);
         bumpSkuSales(order);
+        statDayStore.onCompleted(order.getMerchantId(), Instant.now());
         return view(order);
     }
 
@@ -404,8 +438,11 @@ public class OrderService {
     public Map<String, Object> routePreview(long id) {
         DeliveryOrder order = loadVisible(id);
         double[] rider = riderLatLon(order);
-        return routeService.route(
-                rider[0], rider[1],
+        if ("ARRIVED".equals(order.getStatus()) || "DELIVERING".equals(order.getStatus())) {
+            return routeService.riderToUserRoute(rider[0], rider[1], order.getUserLat(), order.getUserLon());
+        }
+        long riderId = order.getRiderId() == null ? 0L : order.getRiderId();
+        return routeService.cachedTwoLeg(riderId, order.getId(), rider[0], rider[1],
                 order.getMerchantLat(), order.getMerchantLon(),
                 order.getUserLat(), order.getUserLon());
     }
@@ -433,33 +470,66 @@ public class OrderService {
         if (riders == null || riders.isEmpty()) {
             throw BizException.notFound("附近无空闲骑手");
         }
-        Map<String, Object> best = null;
-        double bestCost = Double.MAX_VALUE;
-        Map<String, Object> bestRoute = null;
-        for (Map<String, Object> rider : riders) {
+        record Ranked(Map<String, Object> rider, double cost, Double onTime, Double rating, Map<String, Object> route) {
+        }
+        List<Map<String, Object>> coarse = new ArrayList<>(riders);
+        coarse.sort(Comparator.comparingDouble(r -> com.shansuda.common.route.GridPathFinder.haversineKm(
+                num(r.get("lat")), num(r.get("lon")),
+                order.getMerchantLat(), order.getMerchantLon())));
+        List<Map<String, Object>> shortlist = coarse.size() > ASSIGN_GDS_TOP
+                ? coarse.subList(0, ASSIGN_GDS_TOP) : coarse;
+        List<Ranked> ranked = new ArrayList<>();
+        for (Map<String, Object> rider : shortlist) {
             double rlat = num(rider.get("lat"));
             double rlon = num(rider.get("lon"));
-            Map<String, Object> planned = routeService.route(
+            Object riderIdRaw = rider.get("riderId") != null ? rider.get("riderId") : rider.get("userId");
+            long riderId = riderIdRaw instanceof Number n ? n.longValue() : 0L;
+            Map<String, Object> planned = routeService.cachedTwoLeg(riderId, order.getId(),
                     rlat, rlon, order.getMerchantLat(), order.getMerchantLon(),
                     order.getUserLat(), order.getUserLon());
             double cost = ((Number) planned.get("cost")).doubleValue();
-            if (cost < bestCost) {
-                bestCost = cost;
-                best = rider;
-                bestRoute = planned;
-            }
+            Double onTime = rider.get("onTimeRate") instanceof Number n ? n.doubleValue() : null;
+            Double rating = rider.get("ratingAvg") instanceof Number n ? n.doubleValue() : null;
+            ranked.add(new Ranked(rider, cost, onTime, rating, planned));
         }
-        Object riderIdRaw = best.get("riderId") != null ? best.get("riderId") : best.get("userId");
+        ranked.sort((a, b) -> DispatchRank.compare(a.cost(), a.onTime(), a.rating(), b.cost(), b.onTime(), b.rating()));
+        Ranked chosen = null;
+        for (Ranked cand : ranked) {
+            Object riderIdRaw = cand.rider().get("riderId") != null ? cand.rider().get("riderId") : cand.rider().get("userId");
+            long riderId = ((Number) riderIdRaw).longValue();
+            if (!riderCanAccept(riderId)) {
+                continue;
+            }
+            chosen = cand;
+            break;
+        }
+        if (chosen == null) {
+            throw BizException.conflict("WORK_LIMIT", "附近骑手均已强制下线或工时已满");
+        }
+        Object riderIdRaw = chosen.rider().get("riderId") != null ? chosen.rider().get("riderId") : chosen.rider().get("userId");
         long riderId = ((Number) riderIdRaw).longValue();
         ActivityClient activity = activityClient.getIfAvailable();
         if (activity != null) {
             activity.occupy(Map.of("orderId", orderId, "riderId", riderId));
         }
+        Map<String, Object> accepted = acceptGrab(new GrabSuccessMessage("GRAB:" + orderId + ":" + riderId, orderId, riderId));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("orderId", orderId);
         body.put("riderId", riderId);
-        body.put("route", bestRoute);
+        body.put("route", chosen.route());
+        body.put("status", accepted.get("status"));
+        body.put("pendingGrab", !"ACCEPTED".equals(String.valueOf(accepted.get("status"))));
         return body;
+    }
+
+    private boolean riderCanAccept(long riderId) {
+        try {
+            Map<String, Object> gate = accountClient.canAccept(riderId).data();
+            return gate == null || !Boolean.FALSE.equals(gate.get("allowed"));
+        } catch (Exception ex) {
+            log.warn("工时校验失败 rider={}: {}", riderId, ex.getMessage());
+            return false;
+        }
     }
 
     public Map<String, Object> track(long id) {
@@ -492,6 +562,80 @@ public class OrderService {
         attachReviewed(body, id);
         attachTipAndRider(body, order);
         return body;
+    }
+
+    public Map<String, Object> activeDelivery() {
+        AuthUser auth = AuthHolder.require();
+        if (!auth.isUser()) {
+            Map<String, Object> empty = new LinkedHashMap<>();
+            empty.put("order", null);
+            return empty;
+        }
+        List<Long> ids = jdbc.query(
+                "SELECT id FROM t_order WHERE user_id = ? AND status IN ('PAID','ACCEPTED','ARRIVED','DELIVERING') ORDER BY id DESC LIMIT 8",
+                (rs, i) -> rs.getLong("id"),
+                auth.userId());
+        DeliveryOrder hit = ids.isEmpty() ? null : orderRepo.findByIdIn(ids).stream()
+                .max(Comparator.comparing(DeliveryOrder::getId))
+                .orElse(null);
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (hit == null) {
+            body.put("order", null);
+            return body;
+        }
+        Map<String, Object> tracked = track(hit.getId());
+        slimTrackForFloat(tracked);
+        body.put("order", tracked);
+        body.put("etaMs", tracked.get("etaMs"));
+        return body;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void slimTrackForFloat(Map<String, Object> tracked) {
+        Object route = tracked.get("route");
+        if (!(route instanceof Map<?, ?> raw)) {
+            return;
+        }
+        Map<String, Object> src = (Map<String, Object>) raw;
+        Map<String, Object> slim = new LinkedHashMap<>();
+        slim.put("etaMs", src.get("etaMs"));
+        slim.put("algorithm", src.get("algorithm"));
+        slim.put("engine", src.get("engine"));
+        slim.put("waypoints", src.get("waypoints"));
+        slim.put("cost", src.get("cost"));
+        slim.put("trafficHint", src.get("trafficHint"));
+        slim.put("trafficSource", src.get("trafficSource"));
+        slim.put("segments", src.get("segments"));
+        List<?> pts = src.get("points") instanceof List<?> p ? p : List.of();
+        int step = Math.max(1, pts.size() / 24);
+        List<Object> sampled = new ArrayList<>();
+        for (int i = 0; i < pts.size(); i += step) {
+            sampled.add(pts.get(i));
+        }
+        if (!pts.isEmpty() && sampled.get(sampled.size() - 1) != pts.get(pts.size() - 1)) {
+            sampled.add(pts.get(pts.size() - 1));
+        }
+        slim.put("points", sampled);
+        tracked.put("route", slim);
+    }
+
+    @Transactional
+    public Map<String, Object> riderIssue(long id, String code, String text) {
+        DeliveryOrder order = loadVisible(id);
+        AuthUser auth = AuthHolder.require();
+        if (!auth.isRider() || order.getRiderId() == null || order.getRiderId() != auth.userId()) {
+            throw BizException.forbidden("仅接单骑手可上报异常");
+        }
+        String issueCode = code == null || code.isBlank() ? "OTHER" : code.trim();
+        String issueText = text == null || text.isBlank() ? "骑手上报异常" : text.trim();
+        if (issueText.length() > 255) {
+            issueText = issueText.substring(0, 255);
+        }
+        order.setRiderIssueCode(issueCode);
+        order.setRiderIssueText(issueText);
+        touch(order);
+        orderRepo.save(order);
+        return view(order);
     }
 
     public Map<String, Object> merchantStats(String range, Integer days) {
@@ -553,6 +697,71 @@ public class OrderService {
         return body;
     }
 
+    public Map<String, Object> riderDailyIncome(long riderId, int days) {
+        int window = Math.min(Math.max(days, 1), 31);
+        ZoneId zone = MerchantStatsAggregator.ZONE;
+        LocalDate today = LocalDate.now(zone);
+        LocalDate start = today.minusDays(window - 1L);
+        Instant from = start.atStartOfDay(zone).toInstant();
+        Map<String, long[]> buckets = new LinkedHashMap<>();
+        for (int i = 0; i < window; i++) {
+            buckets.put(start.plusDays(i).toString(), new long[]{0, 0});
+        }
+        Instant monthStart = java.time.YearMonth.from(today).atDay(1).atStartOfDay(zone).toInstant();
+        Instant queryFrom = monthStart.isBefore(from) ? monthStart : from;
+        List<Map<String, Object>> rows = jdbc.query(
+                "SELECT status, freight_cents, updated_at, created_at FROM t_order WHERE rider_id = ? AND updated_at >= ?",
+                (rs, i) -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("status", rs.getString("status"));
+                    row.put("freight", rs.getInt("freight_cents"));
+                    Instant at = readInstant(rs, "updated_at");
+                    if (at == null) {
+                        at = readInstant(rs, "created_at");
+                    }
+                    row.put("at", at);
+                    return row;
+                },
+                riderId, java.sql.Timestamp.from(queryFrom));
+        long monthFreight = 0;
+        int monthCompleted = 0;
+        for (Map<String, Object> row : rows) {
+            if (!"COMPLETED".equals(row.get("status"))) {
+                continue;
+            }
+            Instant at = (Instant) row.get("at");
+            long freight = ((Number) row.get("freight")).longValue();
+            if (at != null && !at.isBefore(monthStart)) {
+                monthFreight += freight;
+                monthCompleted++;
+            }
+            if (at == null) {
+                continue;
+            }
+            String key = LocalDate.ofInstant(at, zone).toString();
+            long[] bucket = buckets.get(key);
+            if (bucket == null) {
+                continue;
+            }
+            bucket[0] += freight;
+            bucket[1] += 1;
+        }
+        List<Map<String, Object>> series = new ArrayList<>();
+        buckets.forEach((date, bucket) -> {
+            Map<String, Object> point = new LinkedHashMap<>();
+            point.put("date", date);
+            point.put("freightCents", bucket[0]);
+            point.put("completedCount", (int) bucket[1]);
+            series.add(point);
+        });
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("days", window);
+        body.put("series", series);
+        body.put("monthFreightCents", monthFreight);
+        body.put("completedThisMonth", monthCompleted);
+        return body;
+    }
+
     private double[] riderLatLon(DeliveryOrder order) {
         if (order.getRiderId() != null) {
             try {
@@ -574,9 +783,17 @@ public class OrderService {
         boolean pageMode = page != null && page > 0;
         int pageNo = OrderSearch.pageNo(page);
         boolean needSearch = !keyword.isEmpty();
+        String statusEq = status != null && !status.isBlank() ? status.trim() : null;
+        if (statusEq == null && needSearch) {
+            statusEq = OrderSearch.exactStatus(keyword);
+            if (statusEq != null) {
+                needSearch = false;
+            }
+        }
+        final boolean searchSql = needSearch;
         List<Object> args = new ArrayList<>();
         StringBuilder sql = new StringBuilder(
-                needSearch
+                searchSql
                         ? "SELECT id, status, address_detail, sku_snapshot FROM t_order WHERE "
                         : "SELECT id FROM t_order WHERE ");
         appendListScope(sql, args, auth, scene);
@@ -585,23 +802,29 @@ public class OrderService {
             args.add(cursor);
         }
         String sc = scene == null ? "" : scene.trim().toLowerCase();
-        if (status != null && !status.isBlank() && !"hall".equals(sc) && !"done".equals(sc)) {
+        if (statusEq != null && !"hall".equals(sc) && !"done".equals(sc)) {
             sql.append(" AND status = ?");
-            args.add(status);
+            args.add(statusEq);
         }
         sql.append(" ORDER BY id DESC");
-        boolean sqlLimit = !pageMode && !needSearch;
+        boolean sqlLimit = !pageMode && !searchSql;
         if (sqlLimit) {
             sql.append(" LIMIT ?");
             args.add(pageSize);
+        } else if (searchSql) {
+            sql.append(" LIMIT ?");
+            args.add(OrderSearch.Q_SCAN_LIMIT);
+        } else {
+            sql.append(" LIMIT ?");
+            args.add(Math.min(OrderSearch.Q_SCAN_LIMIT, Math.max(pageSize, pageNo * pageSize + 1)));
         }
         record Probe(long id, String status, String address, String snapshot) {
         }
-        List<Probe> probes = jdbc.query(sql.toString(), (rs, i) -> needSearch
+        List<Probe> probes = jdbc.query(sql.toString(), (rs, i) -> searchSql
                 ? new Probe(rs.getLong("id"), rs.getString("status"), rs.getString("address_detail"),
                 rs.getString("sku_snapshot"))
                 : new Probe(rs.getLong("id"), null, null, null), args.toArray());
-        if (needSearch) {
+        if (searchSql) {
             probes = probes.stream()
                     .filter(p -> OrderSearch.matches(p.id(), p.status(), p.address(), p.snapshot(), keyword))
                     .toList();
@@ -639,6 +862,11 @@ public class OrderService {
                     return row;
                 })
                 .toList();
+        if ("hall".equals(scene == null ? "" : scene.trim().toLowerCase())) {
+            items = decorateHall(items, auth);
+        } else {
+            attachListEta(items);
+        }
         Long next = ids.isEmpty() ? null : ids.get(ids.size() - 1);
         if (!hasNext) {
             next = null;
@@ -680,6 +908,211 @@ public class OrderService {
         }
         sql.append("user_id = ?");
         args.add(auth.userId());
+    }
+
+    private List<Map<String, Object>> decorateHall(List<Map<String, Object>> items, AuthUser auth) {
+        double rlat;
+        double rlon;
+        Double onTime = null;
+        Double rating = null;
+        try {
+            Map<String, Object> rider = accountClient.rider(auth.userId()).data();
+            rlat = num(rider.get("lat"));
+            rlon = num(rider.get("lon"));
+            if (rider.get("onTimeRate") instanceof Number n) {
+                onTime = n.doubleValue();
+            }
+            if (rider.get("ratingAvg") instanceof Number n) {
+                rating = n.doubleValue();
+            }
+        } catch (Exception ex) {
+            return items;
+        }
+        final Double creditOnTime = onTime;
+        final Double creditRating = rating;
+        long riderId = auth.userId();
+        List<Map<String, Object>> grabable = new ArrayList<>();
+        List<Map<String, Object>> rest = new ArrayList<>();
+        Map<String, Object> inProgress = null;
+        for (Map<String, Object> row : items) {
+            Map<String, Object> copy = new LinkedHashMap<>(row);
+            String st = String.valueOf(copy.get("status"));
+            boolean canGrab = "PAID".equals(st) && copy.get("riderId") == null;
+            boolean current = "ACCEPTED".equals(st) || "ARRIVED".equals(st) || "DELIVERING".equals(st);
+            if (canGrab) {
+                double mlat = num(copy.get("merchantLat"));
+                double mlon = num(copy.get("merchantLon"));
+                var coarse = routeService.haversinePath(rlat, rlon, mlat, mlon);
+                copy.put("routeCost", coarse.cost);
+                copy.put("etaMs", Math.round(coarse.cost * 60_000));
+                copy.put("algorithm", coarse.algorithm);
+                copy.put("routeCoarse", true);
+                copy.put("congestionHint", "粗估");
+                copy.put("onTimeRate", creditOnTime);
+                copy.put("ratingAvg", creditRating);
+                grabable.add(copy);
+            } else if (current) {
+                fillHallPath(copy, riderId, rlat, rlon, st, false);
+                copy.put("onTimeRate", creditOnTime);
+                copy.put("ratingAvg", creditRating);
+                if (inProgress == null) {
+                    inProgress = copy;
+                }
+                rest.add(copy);
+            } else {
+                rest.add(copy);
+            }
+        }
+        grabable.sort(Comparator.comparingDouble(a -> a.get("routeCost") instanceof Number n ? n.doubleValue() : Double.MAX_VALUE));
+        for (int i = 0; i < grabable.size(); i++) {
+            Map<String, Object> copy = grabable.get(i);
+            if (i < HALL_ROUTE_TOP_K) {
+                fillHallPath(copy, riderId, rlat, rlon, "PAID", true);
+            }
+            if (inProgress != null) {
+                boolean along = AlongWay.along(rlat, rlon,
+                        num(inProgress.get("userLat")), num(inProgress.get("userLon")),
+                        num(copy.get("merchantLat")), num(copy.get("merchantLon")),
+                        num(copy.get("userLat")), num(copy.get("userLon")));
+                copy.put("alongWay", along);
+            }
+        }
+        grabable.sort((a, b) -> {
+            boolean aa = Boolean.TRUE.equals(a.get("alongWay"));
+            boolean bb = Boolean.TRUE.equals(b.get("alongWay"));
+            if (aa != bb) {
+                return aa ? -1 : 1;
+            }
+            double ca = a.get("routeCost") instanceof Number n ? n.doubleValue() : Double.MAX_VALUE;
+            double cb = b.get("routeCost") instanceof Number n ? n.doubleValue() : Double.MAX_VALUE;
+            return DispatchRank.compare(ca, creditOnTime, creditRating, cb, creditOnTime, creditRating);
+        });
+        List<Map<String, Object>> out = new ArrayList<>();
+        out.addAll(rest);
+        out.addAll(grabable);
+        out.sort((a, b) -> {
+            boolean aPaid = "PAID".equals(String.valueOf(a.get("status"))) && a.get("riderId") == null;
+            boolean bPaid = "PAID".equals(String.valueOf(b.get("status"))) && b.get("riderId") == null;
+            if (aPaid != bPaid) {
+                return aPaid ? 1 : -1;
+            }
+            return 0;
+        });
+        return out;
+    }
+
+    /** 用户/商家列表：只给当前页进行中单算 ETA，COMPLETED/CANCELLED 不打 GDS。 */
+    private void attachListEta(List<Map<String, Object>> items) {
+        Map<Long, double[]> riderCoords = new HashMap<>();
+        int budget = 0;
+        for (Map<String, Object> row : items) {
+            String st = String.valueOf(row.get("status"));
+            if (!LIVE_ETA_STATUS.contains(st)) {
+                continue;
+            }
+            if (budget >= LIST_ETA_TOP_K) {
+                continue;
+            }
+            budget++;
+            fillListEta(row, riderCoords);
+        }
+    }
+
+    private void fillListEta(Map<String, Object> row, Map<Long, double[]> riderCoords) {
+        try {
+            String st = String.valueOf(row.get("status"));
+            long orderId = ((Number) row.get("id")).longValue();
+            double mlat = num(row.get("merchantLat"));
+            double mlon = num(row.get("merchantLon"));
+            double ulat = num(row.get("userLat"));
+            double ulon = num(row.get("userLon"));
+            Long riderId = row.get("riderId") instanceof Number n ? n.longValue() : null;
+            boolean hasRider = riderId != null && riderId != 0L;
+            long cacheRider = hasRider ? riderId : 0L;
+            double[] from = riderCoord(hasRider ? riderId : null, mlat, mlon, riderCoords);
+            if ("ARRIVED".equals(st) || "DELIVERING".equals(st)) {
+                var path = routeService.cachedLeg(cacheRider, orderId, RoutePathCache.R2U,
+                        from[0], from[1], ulat, ulon);
+                applyListEta(row, path.cost, path.algorithm, routeService.congestionHint(path));
+                return;
+            }
+            if (hasRider) {
+                Map<String, Object> two = routeService.cachedTwoLeg(cacheRider, orderId,
+                        from[0], from[1], mlat, mlon, ulat, ulon);
+                Number cost = two.get("cost") instanceof Number c ? c : null;
+                long etaMs = two.get("etaMs") instanceof Number n ? n.longValue()
+                        : Math.round((cost == null ? 0D : cost.doubleValue()) * 60_000);
+                if (cost != null) {
+                    row.put("routeCost", cost);
+                }
+                row.put("etaMs", etaMs);
+                row.put("algorithm", two.get("algorithm"));
+                row.put("etaLabel", formatEtaLabel(etaMs));
+                return;
+            }
+            var path = routeService.cachedLeg(0L, orderId, RoutePathCache.R2U, mlat, mlon, ulat, ulon);
+            applyListEta(row, path.cost, path.algorithm, routeService.congestionHint(path));
+        } catch (Exception ex) {
+            log.warn("列表 ETA 规划失败 orderId={}: {}", row.get("id"), ex.getMessage());
+        }
+    }
+
+    private double[] riderCoord(Long riderId, double merchantLat, double merchantLon,
+                                Map<Long, double[]> cache) {
+        if (riderId == null || riderId == 0L) {
+            return new double[]{merchantLat, merchantLon};
+        }
+        return cache.computeIfAbsent(riderId, id -> {
+            try {
+                Map<String, Object> rider = accountClient.rider(id).data();
+                if (rider != null && rider.get("lat") != null && rider.get("lon") != null) {
+                    return new double[]{num(rider.get("lat")), num(rider.get("lon"))};
+                }
+            } catch (Exception ignored) {
+                // 骑手坐标读不到时退回商家，保证仍能规划
+            }
+            return new double[]{merchantLat, merchantLon};
+        });
+    }
+
+    private static void applyListEta(Map<String, Object> row, double cost, String algorithm, String congestionHint) {
+        long etaMs = Math.round(cost * 60_000);
+        row.put("routeCost", cost);
+        row.put("etaMs", etaMs);
+        row.put("algorithm", algorithm);
+        row.put("etaLabel", formatEtaLabel(etaMs));
+        if (congestionHint != null && !congestionHint.isBlank()) {
+            row.put("congestionHint", congestionHint);
+        }
+    }
+
+    private static String formatEtaLabel(long etaMs) {
+        if (etaMs <= 0) {
+            return null;
+        }
+        ZonedDateTime at = Instant.now().plusMillis(etaMs).atZone(ZoneId.of("Asia/Shanghai"));
+        return String.format("预计 %02d:%02d 送达", at.getHour(), at.getMinute());
+    }
+
+    private void fillHallPath(Map<String, Object> copy, long riderId, double rlat, double rlon,
+                              String status, boolean toMerchant) {
+        try {
+            long orderId = ((Number) copy.get("id")).longValue();
+            double mlat = num(copy.get("merchantLat"));
+            double mlon = num(copy.get("merchantLon"));
+            double ulat = num(copy.get("userLat"));
+            double ulon = num(copy.get("userLon"));
+            var path = ("ARRIVED".equals(status) || "DELIVERING".equals(status)) && !toMerchant
+                    ? routeService.cachedLeg(riderId, orderId, RoutePathCache.R2U, rlat, rlon, ulat, ulon)
+                    : routeService.cachedLeg(riderId, orderId, RoutePathCache.R2M, rlat, rlon, mlat, mlon);
+            copy.put("routeCost", path.cost);
+            copy.put("etaMs", Math.round(path.cost * 60_000));
+            copy.put("algorithm", path.algorithm);
+            copy.put("routeCoarse", false);
+            copy.put("congestionHint", routeService.congestionHint(path));
+        } catch (Exception ignored) {
+            copy.put("routeCost", copy.get("routeCost"));
+        }
     }
 
     private DeliveryOrder newOrder(long userId, long merchantId, double ulat, double ulon, double mlat, double mlon,
@@ -771,6 +1204,16 @@ public class OrderService {
         map.put("refundReason", order.getRefundReason());
         map.put("refundRejectReason", order.getRefundRejectReason());
         map.put("resumeStatus", order.getResumeStatus());
+        map.put("expectDeliverAt", order.getExpectDeliverAt());
+        map.put("expectDeliverLabel", expectDeliverLabel(order.getExpectDeliverAt()));
+        map.put("riderIssueCode", order.getRiderIssueCode());
+        map.put("riderIssueText", order.getRiderIssueText());
+        if ("MERCHANT_PENDING".equals(order.getStatus()) && order.getCreatedAt() != null) {
+            Instant deadline = order.getCreatedAt().plus(Duration.ofMinutes(acceptTimeoutMin));
+            map.put("acceptDeadlineAt", deadline);
+            map.put("acceptRemainSeconds", Math.max(0, Duration.between(Instant.now(), deadline).getSeconds()));
+        }
+        map.put("canReorder", SkuSnapshot.hasItems(readSnapshot(order.getSkuSnapshot())));
         map.put("idempotencyKey", order.getIdempotencyKey());
         map.put("coverUrl", firstItemImage(readSnapshot(order.getSkuSnapshot())));
         return map;
@@ -975,11 +1418,47 @@ public class OrderService {
     }
 
     @SuppressWarnings("unchecked")
+    private static int shopPromoOff(Map<String, Object> merchant, int goods) {
+        Object raw = merchant.get("shopPromo");
+        if (!(raw instanceof Map<?, ?> promo)) {
+            return 0;
+        }
+        int min = promo.get("minSpendCents") instanceof Number n ? n.intValue() : 0;
+        int off = promo.get("offCents") instanceof Number n ? n.intValue() : 0;
+        if (off <= 0 || goods < min) {
+            return 0;
+        }
+        return Math.min(off, goods);
+    }
+
+    private static Instant parseExpectDeliverAt(String raw) {
+        if (raw == null || raw.isBlank() || "ASAP".equalsIgnoreCase(raw.trim())) {
+            return null;
+        }
+        String v = raw.trim();
+        if ("WITHIN_1H".equalsIgnoreCase(v)) {
+            return Instant.now().plus(Duration.ofHours(1));
+        }
+        try {
+            return Instant.parse(v);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private static String expectDeliverLabel(Instant at) {
+        if (at == null) {
+            return "尽快送达";
+        }
+        return "预约 " + at.toString();
+    }
+
+    @SuppressWarnings("unchecked")
     private Map<String, Object> buildQuote(long merchantId, long addressId, List<Map<String, Object>> rawItems,
                                            Long couponId, Integer clientPayCents, boolean persistCtx) {
         AuthUser user = AuthHolder.require();
         Map<String, Object> merchant = requireData(accountClient.merchant(merchantId), "商家不存在");
-        if (Boolean.FALSE.equals(merchant.get("open")) || "OFFLINE".equals(String.valueOf(merchant.get("onlineStatus")))) {
+        if (!MerchantAcceptPolicy.isOpen(merchant)) {
             throw BizException.conflict("SHOP_CLOSED", "商家休息，暂不可下单");
         }
         Map<String, Object> address = requireData(accountClient.address(user.userId(), addressId), "地址不存在");
@@ -1023,10 +1502,14 @@ public class OrderService {
             goods = 2500;
         }
         Instant now = Instant.now();
-        FreightStrategy strategy = freightSelector.select(now);
+        MemberFreight.Context member = loadMemberContext(user.userId());
+        FreightStrategy strategy = freightSelector.select(now, member);
         int freight = strategy.quote(num(merchant.get("lat")), num(merchant.get("lon")),
                 num(address.get("lat")), num(address.get("lon")), now);
-        List<Map<String, Object>> couponOptions = loadCouponOptions(user.userId(), merchantId, goods, freight);
+        int memberFreightOff = MemberFreight.discountCents(member);
+        int shopPromoCents = shopPromoOff(merchant, goods);
+        int goodsAfterShop = Math.max(0, goods - shopPromoCents);
+        List<Map<String, Object>> couponOptions = loadCouponOptions(user.userId(), merchantId, goodsAfterShop, freight);
         Long suggestedId = bestCouponId(couponOptions);
         Long applyId = couponId;
         if (!persistCtx && couponId == null) {
@@ -1036,6 +1519,9 @@ public class OrderService {
             applyId = null;
         }
         int discount = 0;
+        int goodsDiscount = 0;
+        int freightDiscount = 0;
+        boolean coversFreight = false;
         String couponName = null;
         if (applyId != null) {
             try {
@@ -1043,9 +1529,14 @@ public class OrderService {
                         "userId", user.userId(),
                         "couponId", applyId,
                         "merchantId", merchantId,
-                        "goodsCents", goods
+                        "goodsCents", goodsAfterShop,
+                        "freightCents", freight
                 )), "优惠券不可用");
-                discount = ((Number) quoted.get("discountCents")).intValue();
+                goodsDiscount = quoted.get("goodsDiscountCents") instanceof Number n ? n.intValue()
+                        : ((Number) quoted.get("discountCents")).intValue();
+                freightDiscount = quoted.get("freightDiscountCents") instanceof Number n ? n.intValue() : 0;
+                coversFreight = Boolean.TRUE.equals(quoted.get("coversFreight"));
+                discount = goodsDiscount + freightDiscount;
                 couponName = String.valueOf(quoted.get("name"));
             } catch (BizException ex) {
                 throw ex;
@@ -1057,7 +1548,7 @@ public class OrderService {
                 throw BizException.badRequest("COUPON", "优惠券不可用");
             }
         }
-        int pay = goods + freight - discount;
+        int pay = Math.max(0, goodsAfterShop + freight - discount);
         if (clientPayCents != null && clientPayCents != pay) {
             throw BizException.conflict("AMOUNT_MISMATCH", "应付金额不一致，请刷新结算页");
         }
@@ -1066,18 +1557,29 @@ public class OrderService {
         snapshot.put("couponId", applyId);
         snapshot.put("couponName", couponName);
         snapshot.put("discountCents", discount);
+        snapshot.put("shopPromoCents", shopPromoCents);
         snapshot.put("shopName", merchant.get("shopName"));
         snapshot.put("coverUrl", merchant.get("coverUrl"));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("goodsAmountCents", goods);
+        body.put("shopPromoCents", shopPromoCents);
+        body.put("shopPromoNote", shopPromoCents > 0 ? "先店铺满减再平台券" : "本店暂无满减");
         body.put("freightCents", freight);
         body.put("freightStrategy", strategy.name());
+        body.put("memberFreightOffCents", memberFreightOff);
+        body.put("couponCoversFreight", coversFreight);
+        body.put("goodsDiscountCents", goodsDiscount);
+        body.put("freightDiscountCents", freightDiscount);
         body.put("discountCents", discount);
         body.put("couponName", couponName);
         body.put("couponId", applyId);
         body.put("payCents", pay);
         body.put("suggestedCouponId", suggestedId);
         body.put("couponOptions", couponOptions);
+        body.put("expectSlots", List.of(
+                Map.of("code", "ASAP", "label", "尽快送达"),
+                Map.of("code", "WITHIN_1H", "label", "1 小时内")
+        ));
         body.put("snapshot", snapshot);
         if (persistCtx) {
             body.put("merchant", merchant);
@@ -1093,7 +1595,8 @@ public class OrderService {
                     "userId", userId,
                     "couponId", 0,
                     "merchantId", merchantId,
-                    "goodsCents", goods
+                    "goodsCents", goods,
+                    "freightCents", freight
             ));
             Object rawItems = res == null || res.data() == null ? List.of() : res.data().get("items");
             List<Map<String, Object>> raw = rawItems instanceof List<?> list
@@ -1102,9 +1605,19 @@ public class OrderService {
             for (Map<String, Object> row : raw) {
                 Map<String, Object> opt = new LinkedHashMap<>(row);
                 boolean available = Boolean.TRUE.equals(opt.get("available"));
-                int disc = opt.get("discountCents") instanceof Number n ? n.intValue() : 0;
-                int pay = goods + freight - (available ? disc : 0);
+                int goodsOff = opt.get("goodsDiscountCents") instanceof Number n ? n.intValue()
+                        : (opt.get("discountCents") instanceof Number d ? d.intValue() : 0);
+                int freightOff = opt.get("freightDiscountCents") instanceof Number n ? n.intValue() : 0;
+                boolean covers = Boolean.TRUE.equals(opt.get("coversFreight"));
+                int disc = goodsOff + freightOff;
+                int pay = Math.max(0, goods + freight - (available ? disc : 0));
                 opt.put("payCents", pay);
+                opt.put("goodsDiscountCents", goodsOff);
+                opt.put("freightDiscountCents", freightOff);
+                opt.put("coversFreight", covers);
+                if (opt.get("coversFreightNote") == null) {
+                    opt.put("coversFreightNote", covers ? "本券可抵运费" : "券只抵商品、不抵运费");
+                }
                 if (opt.get("couponId") == null && opt.get("id") != null) {
                     opt.put("couponId", opt.get("id"));
                 }
@@ -1148,6 +1661,21 @@ public class OrderService {
             return Instant.parse(String.valueOf(raw));
         } catch (Exception ex) {
             return Instant.MAX;
+        }
+    }
+
+    private MemberFreight.Context loadMemberContext(long userId) {
+        try {
+            Map<String, Object> card = accountClient.member(userId).data();
+            if (card == null) {
+                return MemberFreight.Context.none();
+            }
+            Integer level = card.get("level") instanceof Number n ? n.intValue() : 0;
+            return MemberFreight.Context.of(level, Boolean.TRUE.equals(card.get("yearMember")),
+                    Boolean.TRUE.equals(card.get("active")));
+        } catch (Exception ex) {
+            log.debug("会员运费上下文不可用: {}", ex.getMessage());
+            return MemberFreight.Context.none();
         }
     }
 
@@ -1208,6 +1736,11 @@ public class OrderService {
         return code + extra;
     }
 
+    private static Instant readInstant(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        java.sql.Timestamp ts = rs.getTimestamp(column);
+        return ts == null ? null : ts.toInstant();
+    }
+
     private static int nzInt(Integer value) {
         return value == null ? 0 : value;
     }
@@ -1219,17 +1752,10 @@ public class OrderService {
             throw BizException.forbidden("仅商家可查看店铺统计");
         }
         int window = MerchantStatsAggregator.resolveDays(range, days);
-        Instant from = LocalDate.now(MerchantStatsAggregator.ZONE)
-                .minusDays(window - 1L)
+        LocalDate today = LocalDate.now(MerchantStatsAggregator.ZONE);
+        Instant from = MerchantStatsAggregator.windowStart(today, window)
                 .atStartOfDay(MerchantStatsAggregator.ZONE)
                 .toInstant();
-        if (window >= 180) {
-            from = LocalDate.now(MerchantStatsAggregator.ZONE)
-                    .minusMonths(11)
-                    .withDayOfMonth(1)
-                    .atStartOfDay(MerchantStatsAggregator.ZONE)
-                    .toInstant();
-        }
         List<Map<String, Object>> completedSnaps = new ArrayList<>();
         List<MerchantStatsAggregator.OrderRow> rows = jdbc.query(
                 "SELECT status, goods_amount_cents, freight_cents, pay_amount_cents, created_at, sku_snapshot FROM t_order WHERE merchant_id = ? AND created_at >= ?",
@@ -1251,13 +1777,28 @@ public class OrderService {
                             status,
                             goods,
                             freight,
-                            rs.getTimestamp("created_at") == null ? null : rs.getTimestamp("created_at").toInstant(),
+                            readInstant(rs, "created_at"),
                             pay);
                 },
                 auth.userId(), java.sql.Timestamp.from(from));
-        MerchantStatsAggregator.Stats stats = MerchantStatsAggregator.aggregate(
-                rows, LocalDate.now(MerchantStatsAggregator.ZONE), window);
+        MerchantStatsAggregator.Stats stats = loadStatsPreferRollup(auth.userId(), rows, window);
         return new MerchantWindow(stats, MerchantReport.topSkus(completedSnaps, 3));
+    }
+
+    private MerchantStatsAggregator.Stats loadStatsPreferRollup(long merchantId,
+                                                                List<MerchantStatsAggregator.OrderRow> rows,
+                                                                int window) {
+        LocalDate today = LocalDate.now(MerchantStatsAggregator.ZONE);
+        MerchantStatsAggregator.Stats scatter = MerchantStatsAggregator.aggregate(rows, today, window);
+        if (window >= 180) {
+            return scatter;
+        }
+        LocalDate start = MerchantStatsAggregator.windowStart(today, window);
+        List<MerchantStatsAggregator.DayPoint> rolled = statDayStore.load(merchantId, start, today);
+        if (!statDayStore.coversWindow(rolled, start, today, MerchantStatsAggregator.seriesGmv(scatter))) {
+            return scatter;
+        }
+        return MerchantStatsAggregator.fromRollup(rolled, today, window, scatter.inProgress());
     }
 
     private record MerchantWindow(MerchantStatsAggregator.Stats stats, List<MerchantReport.SkuHit> top) {
@@ -1271,7 +1812,7 @@ public class OrderService {
                 return;
             }
             Map<String, Object> merchant = accountClient.merchant(order.getMerchantId()).data();
-            if (merchant == null || !Boolean.TRUE.equals(merchant.get("autoAccept"))) {
+            if (!MerchantAcceptPolicy.autoAcceptEnabled(merchant)) {
                 return;
             }
             order.setStatus(OrderStateMachine.merchantAccept(order.getStatus()));
@@ -1280,6 +1821,70 @@ public class OrderService {
         } catch (Exception ex) {
             log.warn("自动接单跳过 order={}: {}", orderId, ex.getMessage());
         }
+    }
+
+    @Transactional
+    public int handleMerchantAcceptTimeouts(Instant now, Duration timeout) {
+        List<Long> ids = jdbc.query("SELECT id FROM t_order WHERE status = 'MERCHANT_PENDING'",
+                (rs, i) -> rs.getLong("id"));
+        int n = 0;
+        for (Long id : ids) {
+            if (timeoutOneMerchantPending(id, now, timeout)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private void requireShopOpenForAccept(long merchantId) {
+        try {
+            Map<String, Object> merchant = accountClient.merchant(merchantId).data();
+            if (!MerchantAcceptPolicy.isOpen(merchant)) {
+                throw BizException.conflict("SHOP_CLOSED", "店铺已打烊，暂不可接新单");
+            }
+        } catch (BizException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            log.warn("接单读商家营业状态失败 merchant={}: {}", merchantId, ex.getMessage());
+        }
+    }
+
+    private boolean timeoutOneMerchantPending(long id, Instant now, Duration timeout) {
+        DeliveryOrder order = orderRepo.findById(id).orElse(null);
+        if (order == null || !"MERCHANT_PENDING".equals(order.getStatus())) {
+            return false;
+        }
+        Instant mark = order.getPaidAt() != null ? order.getPaidAt() : order.getUpdatedAt();
+        boolean shopOpen = true;
+        try {
+            Map<String, Object> merchant = accountClient.merchant(order.getMerchantId()).data();
+            shopOpen = MerchantAcceptPolicy.isOpen(merchant);
+        } catch (Exception ex) {
+            log.debug("超时接单读商家失败 order={}: {}", id, ex.getMessage());
+        }
+        MerchantAcceptPolicy.Action action = MerchantAcceptPolicy.action(
+                MerchantAcceptPolicy.timedOut(mark, now, timeout), shopOpen);
+        if (action == MerchantAcceptPolicy.Action.WAIT) {
+            return false;
+        }
+        if (action == MerchantAcceptPolicy.Action.AUTO_ACCEPT) {
+            order.setStatus(OrderStateMachine.merchantAccept(order.getStatus()));
+            touch(order);
+            orderRepo.save(order);
+            return true;
+        }
+        order.setResumeStatus(order.getStatus());
+        order.setStatus(OrderStateMachine.applyRefund(order.getStatus()));
+        order.setRefundReason("商家打烊且出餐超时，系统自动退款");
+        order.setPayStatus("REFUNDING");
+        order.setStatus(OrderStateMachine.approveRefund(order.getStatus()));
+        order.setPayStatus("REFUNDED");
+        touch(order);
+        orderRepo.save(order);
+        restoreShopStock(order);
+        notifyMemberSpend(order.getUserId(), -nzInt(order.getPayAmountCents()), false);
+        statDayStore.onRefunded(order.getMerchantId(), nzInt(order.getPayAmountCents()), now);
+        return true;
     }
 
     @SuppressWarnings("unchecked")

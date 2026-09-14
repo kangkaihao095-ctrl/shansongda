@@ -30,6 +30,14 @@ class RecommendScorerTest {
     }
 
     @Test
+    void badRatingIsPenalizedHarderThanLinear() {
+        double good = RecommendScorer.score(31.23, 121.47, 31.23, 121.47, 0, 0, 50, 100, 4.9, true, false);
+        double bad = RecommendScorer.score(31.23, 121.47, 31.23, 121.47, 0, 0, 50, 100, 3.0, true, false);
+        assertTrue(good > bad);
+        assertTrue(RecommendScorer.ratingScore(3.0) < (3.0 / 5.0) * 0.7);
+    }
+
+    @Test
     void waitanAndWujiaochangAreBeyondFiveKm() {
         double km = RecommendScorer.haversineKm(31.2397, 121.4903, 31.2994, 121.5145);
         assertTrue(km > 5.0);

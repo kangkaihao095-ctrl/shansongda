@@ -41,6 +41,7 @@ function applyFine() {
   <Teleport to="body">
     <div v-if="open" class="coupon-mask" @click.self="emit('close')">
       <div class="loc-sheet" @click.stop>
+        <div class="sheet-handle"></div>
         <div class="row" style="justify-content:space-between">
           <b>选择收货定位</b>
           <button class="back-btn" type="button" @click="emit('close')">关闭</button>

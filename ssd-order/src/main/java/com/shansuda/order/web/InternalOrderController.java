@@ -5,6 +5,7 @@ import com.shansuda.order.service.OrderService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -22,6 +23,13 @@ public class InternalOrderController {
     @GetMapping("/orders/{id}")
     public ApiResult<Map<String, Object>> get(@PathVariable long id) {
         return ApiResult.ok(orderService.getInternal(id));
+    }
+
+    @GetMapping("/riders/{id}/daily-income")
+    public ApiResult<Map<String, Object>> riderDailyIncome(
+            @PathVariable long id,
+            @RequestParam(defaultValue = "7") int days) {
+        return ApiResult.ok(orderService.riderDailyIncome(id, days));
     }
 
     @GetMapping("/users/{id}/completed-merchants")

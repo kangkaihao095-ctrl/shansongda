@@ -73,6 +73,28 @@ public final class MerchantStatsAggregator {
         return 7;
     }
 
+    public static int windowDays(int days) {
+        if (days >= 180) {
+            return 365;
+        }
+        if (days >= 20) {
+            return 30;
+        }
+        return Math.min(Math.max(days, 1), 31);
+    }
+
+    public static boolean monthly(int days) {
+        return windowDays(days) >= 180;
+    }
+
+    public static LocalDate windowStart(LocalDate today, int days) {
+        int window = windowDays(days);
+        if (window >= 180) {
+            return today.minusMonths(11).withDayOfMonth(1);
+        }
+        return today.minusDays(window - 1L);
+    }
+
     public static String rangeLabel(int days) {
         if (days >= 180) {
             return "1y";
@@ -83,31 +105,27 @@ public final class MerchantStatsAggregator {
         return "7d";
     }
 
-    public static Stats aggregate(List<OrderRow> rows, LocalDate today, int days) {
-        int window = days >= 180 ? 365 : (days >= 20 ? 30 : Math.min(Math.max(days, 1), 31));
-        boolean monthly = window >= 180;
-        LocalDate start = monthly ? today.minusMonths(11).withDayOfMonth(1) : today.minusDays(window - 1L);
-        Map<String, DayPoint> buckets = new LinkedHashMap<>();
-        if (monthly) {
-            YearMonth cursor = YearMonth.from(start);
-            YearMonth end = YearMonth.from(today);
-            while (!cursor.isAfter(end)) {
-                String key = cursor.toString();
-                buckets.put(key, new DayPoint(key, 0, 0, 0, 0));
-                cursor = cursor.plusMonths(1);
-            }
-        } else {
-            for (int i = 0; i < window; i++) {
-                LocalDate day = start.plusDays(i);
-                buckets.put(day.toString(), new DayPoint(day.toString(), 0, 0, 0, 0));
-            }
+    public static long seriesGmv(Stats stats) {
+        if (stats == null || stats.series() == null) {
+            return 0;
         }
+        long gmv = 0;
+        for (DayPoint p : stats.series()) {
+            gmv += p.gmvCents();
+        }
+        return gmv;
+    }
+
+    public static Stats aggregate(List<OrderRow> rows, LocalDate today, int days) {
+        int window = windowDays(days);
+        boolean monthly = monthly(days);
+        Map<String, DayPoint> buckets = emptyBuckets(today, window, monthly);
         int todayOrders = 0;
         long todayGmv = 0;
         int inProgress = 0;
         int completed = 0;
         long refundCents = 0;
-        for (OrderRow row : rows) {
+        for (OrderRow row : rows == null ? List.<OrderRow>of() : rows) {
             if (row.createdAt() == null) {
                 continue;
             }
@@ -130,11 +148,11 @@ public final class MerchantStatsAggregator {
                     refundCents += pay;
                 }
             }
-            if (day.isBefore(start) || day.isAfter(today)) {
+            String key = bucketKey(day, monthly);
+            DayPoint prev = buckets.get(key);
+            if (prev == null) {
                 continue;
             }
-            String key = monthly ? YearMonth.from(day).toString() : day.toString();
-            DayPoint prev = buckets.getOrDefault(key, new DayPoint(key, 0, 0, 0, 0));
             buckets.put(key, new DayPoint(key, prev.orderCount() + 1,
                     prev.gmvCents() + gmv, prev.completedCount() + (done ? 1 : 0),
                     prev.refundCents() + (refund ? pay : 0)));
@@ -143,9 +161,76 @@ public final class MerchantStatsAggregator {
                 monthly ? "month" : "day", rangeLabel(window), new ArrayList<>(buckets.values()));
     }
 
-    static boolean isLive(String status) {
+    public static boolean isLive(String status) {
         return "MERCHANT_PENDING".equals(status) || "PAID".equals(status)
                 || "ACCEPTED".equals(status) || "ARRIVED".equals(status)
                 || "DELIVERING".equals(status) || "REFUNDING".equals(status);
+    }
+
+    /**
+     * 滚表只合并已有桶，禁止把时区错位或月键混入日序列导致 series 变长、x 轴重叠。
+     */
+    public static Stats fromRollup(List<DayPoint> series, LocalDate today, int days, int inProgress) {
+        int window = windowDays(days);
+        boolean monthly = monthly(days);
+        Map<String, DayPoint> buckets = emptyBuckets(today, window, monthly);
+        for (DayPoint p : series == null ? List.<DayPoint>of() : series) {
+            if (p == null || p.date() == null || p.date().isBlank()) {
+                continue;
+            }
+            String key = normalizeKey(p.date(), monthly);
+            DayPoint prev = buckets.get(key);
+            if (prev == null) {
+                continue;
+            }
+            buckets.put(key, new DayPoint(key,
+                    prev.orderCount() + p.orderCount(),
+                    prev.gmvCents() + p.gmvCents(),
+                    prev.completedCount() + p.completedCount(),
+                    prev.refundCents() + p.refundCents()));
+        }
+        DayPoint todayPoint = buckets.getOrDefault(today.toString(), new DayPoint(today.toString(), 0, 0, 0, 0));
+        return new Stats(todayPoint.orderCount(), todayPoint.gmvCents(), inProgress, todayPoint.completedCount(),
+                todayPoint.refundCents(), monthly ? "month" : "day", rangeLabel(window),
+                new ArrayList<>(buckets.values()));
+    }
+
+    static Map<String, DayPoint> emptyBuckets(LocalDate today, int window, boolean monthly) {
+        Map<String, DayPoint> buckets = new LinkedHashMap<>();
+        if (monthly) {
+            LocalDate start = windowStart(today, window);
+            YearMonth cursor = YearMonth.from(start);
+            YearMonth end = YearMonth.from(today);
+            while (!cursor.isAfter(end)) {
+                String key = cursor.toString();
+                buckets.put(key, new DayPoint(key, 0, 0, 0, 0));
+                cursor = cursor.plusMonths(1);
+            }
+            return buckets;
+        }
+        LocalDate start = today.minusDays(window - 1L);
+        for (int i = 0; i < window; i++) {
+            String key = start.plusDays(i).toString();
+            buckets.put(key, new DayPoint(key, 0, 0, 0, 0));
+        }
+        return buckets;
+    }
+
+    static String bucketKey(LocalDate day, boolean monthly) {
+        return monthly ? YearMonth.from(day).toString() : day.toString();
+    }
+
+    static String normalizeKey(String raw, boolean monthly) {
+        String date = raw.trim();
+        if (monthly) {
+            if (date.length() >= 7) {
+                return date.substring(0, 7);
+            }
+            return date;
+        }
+        if (date.length() >= 10) {
+            return date.substring(0, 10);
+        }
+        return date;
     }
 }

@@ -32,6 +32,8 @@ public class Merchant {
     private Integer completedCount;
     @Column(name = "auto_accept")
     private Boolean autoAccept;
+    private String intro;
+    private String phone;
 
     public Long getUserId() { return userId; }
     public void setUserId(Long userId) { this.userId = userId; }
@@ -61,4 +63,8 @@ public class Merchant {
     public void setCompletedCount(Integer completedCount) { this.completedCount = completedCount; }
     public Boolean getAutoAccept() { return autoAccept; }
     public void setAutoAccept(Boolean autoAccept) { this.autoAccept = autoAccept; }
+    public String getIntro() { return intro; }
+    public void setIntro(String intro) { this.intro = intro; }
+    public String getPhone() { return phone; }
+    public void setPhone(String phone) { this.phone = phone; }
 }

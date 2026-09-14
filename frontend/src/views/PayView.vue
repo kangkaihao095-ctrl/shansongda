@@ -43,12 +43,12 @@ async function pay() {
   <div class="phone page">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router)">← 返回</button>
-      <b>收银台</b>
+      <b class="page-title" style="font-size:18px">收银台</b>
     </header>
     <div class="phone-body no-tab pad" v-if="order">
-      <div class="card" style="text-align:center;margin-bottom:14px">
+      <div class="card pay-hero">
         <div class="muted">应付金额</div>
-        <div class="num" style="font-size:36px;font-weight:800">{{ yuan(payCents) }}</div>
+        <div class="num">{{ yuan(payCents) }}</div>
         <div class="muted">商品 {{ yuan(order.goodsAmountCents) }} · 配送 {{ yuan(order.freightCents) }} · 优惠 -{{ yuan(snap.discountCents) }}</div>
       </div>
       <button class="pay-card" :class="{ on: channel==='WECHAT' }" type="button" @click="channel='WECHAT'">

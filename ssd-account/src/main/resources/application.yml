@@ -4,18 +4,27 @@ server:
 ssd:
   jwt:
     secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  internal:
+    token: ${SSD_INTERNAL_TOKEN:ssd-internal-local}
   avatar:
     dir: data/avatars
   review-photos:
     dir: data/review-photos
+  shop-covers:
+    dir: data/shop-covers
   rider:
     max-work-hours: ${SSD_RIDER_MAX_WORK_HOURS:8}
     daily-subsidy-cents: ${SSD_RIDER_DAILY_SUBSIDY_CENTS:1500}
     complete-subsidy-cents: ${SSD_RIDER_COMPLETE_SUBSIDY_CENTS:200}
   amap:
+    # 与 order 交通态势共用同一环境变量；前端 JS 底图也走这里。
     key: ${SSD_AMAP_KEY:}
   recommend:
     max-km: ${SSD_RECOMMEND_MAX_KM:5}
+  search:
+    include-out-of-range: ${SSD_SEARCH_INCLUDE_OUT_OF_RANGE:true}
+  merchant:
+    stock-warn: ${SSD_MERCHANT_STOCK_WARN:10}
   client:
     order: http://127.0.0.1:18083
 

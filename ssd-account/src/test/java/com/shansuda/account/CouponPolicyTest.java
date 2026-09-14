@@ -10,6 +10,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CouponPolicyTest {
 
@@ -59,7 +60,36 @@ class CouponPolicyTest {
         coupon.setDiscountCents(1500);
         coupon.setEndAt(Instant.parse("2020-01-01T00:00:00Z"));
         CouponPolicy.Quote q = CouponPolicy.quote(coupon, 2000, null, Instant.parse("2026-01-01T00:00:00Z"));
-        assertEquals(false, q.available());
+        assertTrue(q.available() == false);
         assertEquals("COUPON_TIME", q.reasonCode());
+    }
+
+    @Test
+    void couponsDoNotCoverFreight() {
+        Coupon coupon = new Coupon();
+        coupon.setType("AMOUNT");
+        coupon.setMinSpendCents(0);
+        coupon.setDiscountCents(500);
+        CouponPolicy.Quote q = CouponPolicy.quote(coupon, 2000, 600, null, Instant.parse("2026-01-01T00:00:00Z"));
+        assertEquals(500, q.discountCents());
+        assertEquals(500, q.goodsDiscountCents());
+        assertEquals(0, q.freightDiscountCents());
+        assertTrue(q.coversFreight() == false);
+        assertTrue(q.discountCents() <= 2000);
+    }
+
+    @Test
+    void freightCouponCoversFreightOnly() {
+        Coupon coupon = new Coupon();
+        coupon.setType("FREIGHT");
+        coupon.setMinSpendCents(0);
+        coupon.setDiscountCents(300);
+        CouponPolicy.Quote q = CouponPolicy.quote(coupon, 2000, 600, null, Instant.parse("2026-01-01T00:00:00Z"));
+        assertTrue(q.coversFreight());
+        assertEquals(300, q.freightDiscountCents());
+        assertEquals(0, q.goodsDiscountCents());
+        assertEquals(300, q.discountCents());
+        CouponPolicy.Quote cap = CouponPolicy.quote(coupon, 2000, 200, null, Instant.parse("2026-01-01T00:00:00Z"));
+        assertEquals(200, cap.freightDiscountCents());
     }
 }

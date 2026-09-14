@@ -16,5 +16,7 @@ describe('resolveNavigation', () => {
     expect(resolveNavigation({ path: '/home', meta: { role: 'USER' } }, { role: 'RIDER' })).toBe('/rider')
     expect(resolveNavigation({ path: '/coupons', meta: { role: 'USER' } }, { role: 'MERCHANT' })).toBe('/shop')
     expect(resolveNavigation({ path: '/orders', meta: {} }, { role: 'USER' })).toBe(true)
+    expect(resolveNavigation({ path: '/rider/income', meta: { role: 'RIDER' } }, { role: 'RIDER' })).toBe(true)
+    expect(resolveNavigation({ path: '/rider/income', meta: { role: 'RIDER' } }, { role: 'USER' })).toBe('/home')
   })
 })

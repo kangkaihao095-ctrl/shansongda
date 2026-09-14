@@ -5,6 +5,8 @@ ssd:
   mode: ${SSD_MODE:auto}
   jwt:
     secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  internal:
+    token: ${SSD_INTERNAL_TOKEN:ssd-internal-local}
   es:
     url: http://127.0.0.1:9210
   canal:

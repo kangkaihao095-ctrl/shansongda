@@ -57,4 +57,25 @@ public class OrderInternalClient {
             return Map.of();
         }
     }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> riderDailyIncome(long riderId, int days) {
+        try {
+            Map<String, Object> body = restTemplate.getForObject(
+                    base + "/internal/riders/{id}/daily-income?days={days}", Map.class, riderId, days);
+            if (body == null) {
+                return Map.of();
+            }
+            Object data = body.get("data");
+            if (data instanceof Map<?, ?> map) {
+                Map<String, Object> out = new HashMap<>();
+                map.forEach((k, v) -> out.put(String.valueOf(k), v));
+                return out;
+            }
+            return Map.of();
+        } catch (Exception ex) {
+            log.debug("骑手日收入不可用: {}", ex.getMessage());
+            return Map.of();
+        }
+    }
 }

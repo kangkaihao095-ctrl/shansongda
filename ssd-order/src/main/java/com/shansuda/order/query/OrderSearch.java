@@ -9,6 +9,8 @@ public final class OrderSearch {
 
     public static final int DEFAULT_SIZE = 10;
     public static final List<Integer> SIZES = List.of(5, 10, 20);
+    /** q 关键词 scatter 扫描上限（每分片），避免全表扫。 */
+    public static final int Q_SCAN_LIMIT = 500;
 
     public static final Map<String, String> STATUS_CN = Map.ofEntries(
             Map.entry("CREATED", "待支付"),
@@ -75,6 +77,22 @@ public final class OrderSearch {
             return 1;
         }
         return page;
+    }
+
+    /**
+     * 仅当 q 唯一命中某个状态枚举或中文全称时下推 SQL；模糊别名（如「待接单」）不下推。
+     */
+    public static String exactStatus(String q) {
+        if (q == null || q.isBlank()) {
+            return null;
+        }
+        String raw = q.trim();
+        for (Map.Entry<String, String> e : STATUS_CN.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(raw) || e.getValue().equals(raw)) {
+                return e.getKey();
+            }
+        }
+        return null;
     }
 
     public static boolean matches(long id, String status, String address, String snapshot, String q) {

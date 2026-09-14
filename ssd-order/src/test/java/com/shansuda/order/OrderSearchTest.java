@@ -42,6 +42,15 @@ class OrderSearchTest {
     }
 
     @Test
+    void exactStatusPushesFullNameOrEnum() {
+        assertEquals("DELIVERING", OrderSearch.exactStatus("配送中"));
+        assertEquals("PAID", OrderSearch.exactStatus("PAID"));
+        assertEquals("PAID", OrderSearch.exactStatus("商家已接单·备餐中"));
+        assertEquals(null, OrderSearch.exactStatus("待接单"));
+        assertEquals(500, OrderSearch.Q_SCAN_LIMIT);
+    }
+
+    @Test
     void slicesPagesWithoutSqlOffset() {
         List<Long> ids = List.of(9L, 8L, 7L, 6L, 5L);
         OrderSearch.Slice<Long> first = OrderSearch.slice(ids, 1, 2, Long::longValue);

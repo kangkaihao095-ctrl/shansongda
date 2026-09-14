@@ -20,6 +20,7 @@ public final class RiderNearby {
     public static List<Map<String, Object>> filterAndSort(List<Rider> riders, double lat, double lon,
                                                           int radiusMeters, String onlineStatus, String acceptStatus) {
         int radius = radiusMeters <= 0 ? Integer.MAX_VALUE : radiusMeters;
+        double[] box = radius == Integer.MAX_VALUE ? null : Geo.boundingBox(lat, lon, radius);
         List<Hit> hits = new ArrayList<>();
         for (Rider rider : riders) {
             if (rider.getLat() == null || rider.getLon() == null) {
@@ -29,6 +30,9 @@ public final class RiderNearby {
                 continue;
             }
             if (acceptStatus != null && !acceptStatus.isBlank() && !acceptStatus.equals(rider.getAcceptStatus())) {
+                continue;
+            }
+            if (box != null && !Geo.inBoundingBox(rider.getLat(), rider.getLon(), box)) {
                 continue;
             }
             double km = Geo.haversineKm(lat, lon, rider.getLat(), rider.getLon());

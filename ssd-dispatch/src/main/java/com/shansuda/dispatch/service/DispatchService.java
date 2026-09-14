@@ -3,13 +3,14 @@ package com.shansuda.dispatch.service;
 import com.shansuda.common.api.BizException;
 import com.shansuda.common.auth.AuthHolder;
 import com.shansuda.common.auth.AuthUser;
+import com.shansuda.common.route.AmapTrafficClient;
 import com.shansuda.dispatch.client.AccountClient;
 import com.shansuda.dispatch.client.ActivityClient;
 import com.shansuda.dispatch.client.OrderClient;
-import com.shansuda.dispatch.grid.CongestionAggregator;
-import com.shansuda.dispatch.neo4j.Neo4jRoadStore;
 import com.shansuda.common.route.GridPathFinder;
+import com.shansuda.common.route.Neo4jRoadStore;
 import com.shansuda.common.route.OsmGraphLoader;
+import com.shansuda.common.route.TrafficProfile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,15 +39,21 @@ public class DispatchService {
     private final String neo4jUri;
     private final String neo4jUser;
     private final String neo4jPassword;
+    private final String amapKey;
+    private final Clock clock;
     private Neo4jRoadStore neo4j;
     private boolean useNeo4j;
+    private volatile String trafficSource = TrafficProfile.DEFAULT;
+    private volatile String trafficPeriod = "";
+    private volatile boolean amapEverSucceeded;
 
     public DispatchService(ObjectProvider<OrderClient> orderClient,
                            ObjectProvider<ActivityClient> activityClient, ObjectProvider<AccountClient> accountClient,
                            @Value("${ssd.mode:auto}") String mode,
                            @Value("${ssd.neo4j.uri:bolt://127.0.0.1:7687}") String neo4jUri,
                            @Value("${ssd.neo4j.username:neo4j}") String neo4jUser,
-                           @Value("${ssd.neo4j.password:shansuda}") String neo4jPassword) {
+                           @Value("${ssd.neo4j.password:shansuda}") String neo4jPassword,
+                           @Value("${ssd.amap.key:}") String amapKey) {
         this.graph = OsmGraphLoader.load();
         this.orderClient = orderClient;
         this.activityClient = activityClient;
@@ -54,6 +62,8 @@ public class DispatchService {
         this.neo4jUri = neo4jUri;
         this.neo4jUser = neo4jUser;
         this.neo4jPassword = neo4jPassword;
+        this.amapKey = amapKey == null ? "" : amapKey.trim();
+        this.clock = Clock.system(TrafficProfile.ZONE);
     }
 
     @PostConstruct
@@ -61,6 +71,9 @@ public class DispatchService {
         log.info("调度路网就绪：节点 {} 边 {}", graph.nodes().size(), graph.edgeCount());
         if ("dry-run".equals(mode)) {
             return;
+        }
+        if (amapKey.isEmpty()) {
+            refreshCongestion();
         }
         try {
             neo4j = new Neo4jRoadStore(neo4jUri, neo4jUser, neo4jPassword);
@@ -72,6 +85,9 @@ public class DispatchService {
         } catch (Exception ex) {
             log.warn("Neo4j 初始化失败，使用内存路网: {}", ex.getMessage());
             useNeo4j = false;
+        }
+        if (!amapKey.isEmpty()) {
+            refreshCongestion();
         }
     }
 
@@ -86,12 +102,30 @@ public class DispatchService {
                                      double userLat, double userLon) {
         GridPathFinder.Path first = segment(riderLat, riderLon, merchantLat, merchantLon);
         GridPathFinder.Path second = segment(merchantLat, merchantLon, userLat, userLon);
+        Map<String, Object> riderToMerchant = leg(first);
+        Map<String, Object> merchantToUser = leg(second);
+        List<Map<String, Object>> points = new ArrayList<>();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstPts = (List<Map<String, Object>>) riderToMerchant.get("points");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> secondPts = (List<Map<String, Object>>) merchantToUser.get("points");
+        points.addAll(firstPts);
+        points.addAll(secondPts);
+        List<Map<String, Object>> segments = new ArrayList<>();
+        segments.addAll(graph.segments(first));
+        segments.addAll(graph.segments(second));
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("riderToMerchant", leg(first));
-        body.put("merchantToUser", leg(second));
+        body.put("riderToMerchant", riderToMerchant);
+        body.put("merchantToUser", merchantToUser);
+        body.put("legs", List.of(riderToMerchant, merchantToUser));
+        body.put("segments", segments);
+        body.put("points", points);
         body.put("cost", first.cost + second.cost);
         body.put("etaMs", Math.round((first.cost + second.cost) * 60_000));
-        body.put("algorithm", first.algorithm);
+        body.put("algorithm", combineAlgorithm(first.algorithm, second.algorithm));
+        body.put("congestionApplied", true);
+        body.put("trafficSource", trafficSource);
+        body.put("trafficHint", TrafficProfile.hint(trafficSource, trafficPeriod));
         body.put("waypoints", Map.of(
                 "rider", Map.of("lat", riderLat, "lon", riderLon),
                 "merchant", Map.of("lat", merchantLat, "lon", merchantLon),
@@ -142,47 +176,31 @@ public class DispatchService {
         return body;
     }
 
-    @Scheduled(fixedDelayString = "${ssd.dispatch.congestion-ms:60000}")
+    @Scheduled(initialDelay = 0, fixedDelayString = "${ssd.dispatch.congestion-ms:60000}")
     public void refreshCongestion() {
-        List<double[]> positions = loadRiderPositions();
-        boolean seeded = positions.isEmpty();
-        if (seeded) {
-            positions = new ArrayList<>(CongestionAggregator.seedTraces());
+        AmapTrafficClient.TrafficSnapshot snap = AmapTrafficClient.fetch(graph, amapKey);
+        TrafficProfile.Decision decision = TrafficProfile.refresh(graph, snap, clock, amapEverSucceeded);
+        trafficSource = decision.source();
+        trafficPeriod = decision.periodLabel() == null ? "" : decision.periodLabel();
+        if (TrafficProfile.AMAP.equals(decision.source())) {
+            amapEverSucceeded = true;
         }
-        List<Map<String, Object>> rows = CongestionAggregator.apply(graph, positions);
-        if (rows.isEmpty()) {
+        if (!decision.wrote()) {
+            log.warn("高德态势失败，保留上一轮边权: {}", snap.error());
             return;
         }
-        log.debug("拥堵聚合：位置 {} 条{}，更新边 {}", positions.size(), seeded ? "（种子轨迹）" : "", rows.size());
-        if (useNeo4j && neo4j != null) {
+        if (TrafficProfile.PROFILE.equals(decision.source())) {
+            log.info("时段路况画像已写入边权：period={} 变更 {}", trafficPeriod, decision.rows().size());
+        } else {
+            log.info("高德态势已写入边权：变更 {}", decision.rows().size());
+        }
+        if (useNeo4j && neo4j != null && !decision.rows().isEmpty()) {
             try {
-                neo4j.updateCongestion(rows);
+                neo4j.updateCongestion(decision.rows());
             } catch (Exception ex) {
                 log.warn("拥堵更新失败: {}", ex.getMessage());
             }
         }
-    }
-
-    private List<double[]> loadRiderPositions() {
-        List<double[]> positions = new ArrayList<>();
-        AccountClient account = accountClient.getIfAvailable();
-        if (account == null) {
-            return positions;
-        }
-        try {
-            List<Map<String, Object>> rows = account.riderLocations(300).data();
-            if (rows == null) {
-                return positions;
-            }
-            for (Map<String, Object> row : rows) {
-                if (row.get("lat") instanceof Number lat && row.get("lon") instanceof Number lon) {
-                    positions.add(new double[]{lat.doubleValue(), lon.doubleValue()});
-                }
-            }
-        } catch (Exception ex) {
-            log.debug("读取骑手位置失败，将用种子轨迹: {}", ex.getMessage());
-        }
-        return positions;
     }
 
     private GridPathFinder.Path segment(double fromLat, double fromLon, double toLat, double toLon) {
@@ -199,10 +217,17 @@ public class DispatchService {
         try {
             return graph.shortest(src.id, dst.id);
         } catch (IllegalStateException ex) {
-            log.warn("路网暂不可达，退回最近路口连线: {}", ex.getMessage());
+            log.warn("路网暂不可达，退回 Haversine 直线: {}", ex.getMessage());
             double km = GridPathFinder.haversineKm(src.lat, src.lon, dst.lat, dst.lon);
-            return new GridPathFinder.Path(List.of(src.id, dst.id), Math.max(0.2, km * 2.2), astar ? "ASTAR" : "DIJKSTRA");
+            return new GridPathFinder.Path(List.of(src.id, dst.id), Math.max(0.2, km * 2.2), "HAVERSINE_FALLBACK");
         }
+    }
+
+    static String combineAlgorithm(String first, String second) {
+        if ("HAVERSINE_FALLBACK".equals(first) || "HAVERSINE_FALLBACK".equals(second)) {
+            return "HAVERSINE_FALLBACK";
+        }
+        return first;
     }
 
     private Map<String, Object> leg(GridPathFinder.Path path) {
@@ -216,6 +241,7 @@ public class DispatchService {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("nodeIds", path.nodeIds);
         body.put("points", points);
+        body.put("segments", graph.segments(path));
         body.put("cost", path.cost);
         body.put("algorithm", path.algorithm);
         return body;

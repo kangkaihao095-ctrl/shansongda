@@ -48,9 +48,17 @@ export function couponRules(c) {
   const lines = [couponThreshold(c) + '，按下单页结算为准']
   if (c?.memberOnly) lines.push('仅闪会员可用')
   if (c?.type === 'PERCENT') lines.push(`商品合计按 ${c.percentOff || 0} 折，运费不参与折扣`)
+  else if (c?.type === 'FREIGHT' || c?.coversFreight === true) lines.push('运费券：可抵配送费')
   else lines.push('抵扣商品金额，不抵运费')
+  lines.push(freightCoverText(c))
   lines.push('不可与部分活动同享；过期自动失效')
   return lines
+}
+
+/** 券只抵商品、不抵运费。与 preview.couponOptions.coversFreight 对齐。 */
+export function freightCoverText(c) {
+  if (c?.coversFreight === true) return '本券可抵运费'
+  return c?.coversFreightNote || '本券不抵扣运费（只抵商品）'
 }
 
 export function shanghaiDate() {

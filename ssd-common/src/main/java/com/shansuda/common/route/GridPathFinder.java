@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
@@ -32,13 +33,27 @@ public class GridPathFinder {
         public double baseTime;
         public double congestion;
         public final String roadId;
+        /** OSM / 骨架路名，仅内存匹配高德道路与时段画像，不进 Neo4j。 */
+        public final String name;
+        /** OSM highway，仅内存时段画像使用，不进 Neo4j。 */
+        public final String highway;
 
         public Edge(int to, double baseTime, double congestion, String roadId) {
+            this(to, baseTime, congestion, roadId, "", "");
+        }
+
+        public Edge(int to, double baseTime, double congestion, String roadId, String name) {
+            this(to, baseTime, congestion, roadId, name, "");
+        }
+
+        public Edge(int to, double baseTime, double congestion, String roadId, String name, String highway) {
             this.to = to;
             this.baseTime = baseTime;
             this.congestion = congestion;
             this.cost = baseTime * congestion;
             this.roadId = roadId;
+            this.name = name == null ? "" : name;
+            this.highway = highway == null ? "" : highway;
         }
 
         public void setCongestion(double congestion) {
@@ -92,6 +107,44 @@ public class GridPathFinder {
     }
 
     /** 把经纬度映射到最近路段（点到折线距离），供拥堵聚合使用。 */
+    public Edge edgeBetween(int from, int to) {
+        for (Edge edge : adj.getOrDefault(from, List.of())) {
+            if (edge.to == to) {
+                return edge;
+            }
+        }
+        return null;
+    }
+
+    /** 路径折线分段，带当前边权 congestion，供前端绿/黄/红着色。 */
+    public List<Map<String, Object>> segments(Path path) {
+        List<Map<String, Object>> segs = new ArrayList<>();
+        if (path == null || path.nodeIds == null || path.nodeIds.size() < 2) {
+            return segs;
+        }
+        for (int i = 0; i < path.nodeIds.size() - 1; i++) {
+            int fromId = path.nodeIds.get(i);
+            int toId = path.nodeIds.get(i + 1);
+            Node from = node(fromId);
+            Node to = node(toId);
+            if (from == null || to == null || !from.hasCoord() || !to.hasCoord()) {
+                continue;
+            }
+            Edge edge = edgeBetween(fromId, toId);
+            Map<String, Object> seg = new LinkedHashMap<>();
+            seg.put("from", Map.of("lat", from.lat, "lon", from.lon));
+            seg.put("to", Map.of("lat", to.lat, "lon", to.lon));
+            double congestion = edge != null ? edge.congestion : 1.0;
+            seg.put("congestion", congestion);
+            if (edge != null) {
+                seg.put("cost", edge.cost);
+                seg.put("roadId", edge.roadId);
+            }
+            segs.add(seg);
+        }
+        return segs;
+    }
+
     public Edge nearestEdge(double lat, double lon) {
         Edge best = null;
         double bestD = Double.MAX_VALUE;
@@ -234,22 +287,26 @@ public class GridPathFinder {
             for (int x = 0; x < n; x++) {
                 int id = y * n + x;
                 if (x + 1 < n) {
-                    link(graph, id, id + 1, road++);
+                    String highway = y == 0 || y == 4 ? "primary" : "residential";
+                    String name = y == 0 ? "南京东路" : (y == 4 ? "延安路" : "");
+                    link(graph, id, id + 1, road++, highway, name);
                 }
                 if (y + 1 < n) {
-                    link(graph, id, id + n, road++);
+                    String highway = x == n - 1 ? "primary" : "residential";
+                    String name = x == n - 1 ? "中山东一路" : "";
+                    link(graph, id, id + n, road++, highway, name);
                 }
             }
         }
         return graph;
     }
 
-    private static void link(GridPathFinder graph, int a, int b, int road) {
+    private static void link(GridPathFinder graph, int a, int b, int road, String highway, String name) {
         Node na = graph.node(a);
         Node nb = graph.node(b);
         double km = haversineKm(na.lat, na.lon, nb.lat, nb.lon);
         double base = Math.max(0.4, km * 2.0);
-        graph.addEdge(a, new Edge(b, base, 1.0, "r" + road + "a"));
-        graph.addEdge(b, new Edge(a, base, 1.0, "r" + road + "b"));
+        graph.addEdge(a, new Edge(b, base, 1.0, "r" + road + "a", name, highway));
+        graph.addEdge(b, new Edge(a, base, 1.0, "r" + road + "b", name, highway));
     }
 }

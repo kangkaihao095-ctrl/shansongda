@@ -96,7 +96,7 @@ onMounted(load)
   <div class="phone page">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router, '/orders/' + route.params.id)">← 返回</button>
-      <b>评价订单</b>
+      <b class="page-title" style="font-size:18px">评价订单</b>
     </header>
     <div class="phone-body pad" v-if="order">
       <div class="card review-shop">

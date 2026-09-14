@@ -9,10 +9,13 @@ public class AccountWebConfig implements WebMvcConfigurer {
 
     private final AvatarStorage avatarStorage;
     private final ReviewPhotoStorage reviewPhotoStorage;
+    private final ShopCoverStorage shopCoverStorage;
 
-    public AccountWebConfig(AvatarStorage avatarStorage, ReviewPhotoStorage reviewPhotoStorage) {
+    public AccountWebConfig(AvatarStorage avatarStorage, ReviewPhotoStorage reviewPhotoStorage,
+                            ShopCoverStorage shopCoverStorage) {
         this.avatarStorage = avatarStorage;
         this.reviewPhotoStorage = reviewPhotoStorage;
+        this.shopCoverStorage = shopCoverStorage;
     }
 
     @Override
@@ -20,6 +23,8 @@ public class AccountWebConfig implements WebMvcConfigurer {
         registry.addResourceHandler("/api/avatars/**").addResourceLocations(dir(avatarStorage.root().toUri().toString()));
         registry.addResourceHandler("/api/review-photos/**")
                 .addResourceLocations(dir(reviewPhotoStorage.root().toUri().toString()));
+        registry.addResourceHandler("/api/shop-covers/**")
+                .addResourceLocations(dir(shopCoverStorage.root().toUri().toString()));
     }
 
     private static String dir(String location) {

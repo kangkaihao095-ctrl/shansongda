@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { api, setToken, token } from './api'
+import { mergeServerCart } from './cart'
 
 export const session = reactive({
   me: null,
@@ -19,6 +20,9 @@ export function toast(message, kind = 'ok') {
 export async function loadMe() {
   const res = await api('/api/me')
   session.me = res.data
+  if (session.me?.role === 'USER') {
+    mergeServerCart().catch(() => {})
+  }
   return res.data
 }
 
@@ -31,8 +35,10 @@ export async function login(phone, password) {
   return me
 }
 
-export async function register(phone, password, role) {
-  const res = await api('/api/auth/register', { method: 'POST', body: { phone, password, role } })
+export async function register(phone, password, role, displayName) {
+  const body = { phone, password, role: role || 'USER' }
+  if (displayName && String(displayName).trim()) body.displayName = String(displayName).trim()
+  const res = await api('/api/auth/register', { method: 'POST', body })
   setToken(res.data.token)
   const me = await loadMe()
   if (res.data.grants?.granted?.length) {

@@ -31,8 +31,12 @@ class MerchantReportTest {
         assertTrue(text.contains("近七日"));
         assertTrue(text.contains("杨枝甘露"));
         assertTrue(text.contains("高峰日"));
+        assertTrue(text.contains("客单价"));
         assertFalse(text.contains("SLA"));
         assertFalse(text.contains("P95"));
+        var extras = MerchantReport.extras(stats, top);
+        assertTrue(extras.containsKey("avgPayCents"));
+        assertTrue(extras.containsKey("refundRate"));
     }
 
     @Test
@@ -44,6 +48,17 @@ class MerchantReportTest {
         assertEquals('\uFEFF', text.charAt(0));
         assertTrue(text.contains("日期,单量,GMV,完成,退款"));
         assertEquals(8, text.split("\n").length);
+    }
+
+    @Test
+    void csvThirtyDaysHasThirtyRows() {
+        LocalDate today = LocalDate.of(2026, 9, 11);
+        MerchantStatsAggregator.Stats stats = MerchantStatsAggregator.aggregate(List.of(), today, 30);
+        byte[] csv = MerchantReport.csv(stats);
+        String text = new String(csv, java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(31, text.split("\n").length);
+        assertTrue(text.contains(today.minusDays(29).toString()));
+        assertTrue(text.contains(today.toString()));
     }
 
     @Test

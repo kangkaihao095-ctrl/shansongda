@@ -1,5 +1,11 @@
 import { yuan } from './brand'
 
+export function shopIsOpen(merchant) {
+  if (!merchant) return true
+  if (merchant.open === false) return false
+  return merchant.onlineStatus !== 'OFFLINE'
+}
+
 export function groupSkus(items) {
   const map = new Map()
   for (const sku of items || []) {
@@ -19,6 +25,8 @@ export function centsFromYuan(value) {
 export function yuanDraft(cents) {
   return ((Number(cents) || 0) / 100).toFixed(2)
 }
+
+export { chartLabelStep } from './riderReport'
 
 export function reportSummary(stats) {
   if (stats?.summary) return stats.summary
@@ -44,5 +52,7 @@ export function reportSummary(stats) {
   const peak = peakOrders > 0 && peakDate
     ? `高峰日 ${peakDate}（${peakOrders} 单）。`
     : '高峰日尚未形成。'
-  return `${title}共 ${orders} 单，成交 ${yuan(gmv)}，完成 ${completed} 单，退款 ${yuan(refund)}。${hot}${peak}`
+  const aov = stats?.avgPayCents != null ? `客单价 ${yuan(stats.avgPayCents)}。` : ''
+  const rate = stats?.refundRate != null ? `退款率 ${Math.round(Number(stats.refundRate) * 1000) / 10}%。` : ''
+  return `${title}共 ${orders} 单，成交 ${yuan(gmv)}，完成 ${completed} 单，退款 ${yuan(refund)}。${aov}${rate}${hot}${peak}`
 }

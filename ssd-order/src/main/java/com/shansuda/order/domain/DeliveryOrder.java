@@ -65,6 +65,12 @@ public class DeliveryOrder {
     private String refundRejectReason;
     @Column(name = "resume_status")
     private String resumeStatus;
+    @Column(name = "expect_deliver_at")
+    private Instant expectDeliverAt;
+    @Column(name = "rider_issue_code")
+    private String riderIssueCode;
+    @Column(name = "rider_issue_text")
+    private String riderIssueText;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -122,4 +128,10 @@ public class DeliveryOrder {
     public void setRefundRejectReason(String refundRejectReason) { this.refundRejectReason = refundRejectReason; }
     public String getResumeStatus() { return resumeStatus; }
     public void setResumeStatus(String resumeStatus) { this.resumeStatus = resumeStatus; }
+    public Instant getExpectDeliverAt() { return expectDeliverAt; }
+    public void setExpectDeliverAt(Instant expectDeliverAt) { this.expectDeliverAt = expectDeliverAt; }
+    public String getRiderIssueCode() { return riderIssueCode; }
+    public void setRiderIssueCode(String riderIssueCode) { this.riderIssueCode = riderIssueCode; }
+    public String getRiderIssueText() { return riderIssueText; }
+    public void setRiderIssueText(String riderIssueText) { this.riderIssueText = riderIssueText; }
 }

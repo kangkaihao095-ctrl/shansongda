@@ -34,12 +34,24 @@ public final class RecommendScorer {
         double dist = distanceScore(userLat, userLon, shopLat, shopLon);
         double aff = maxCategoryFreq <= 0 ? 0 : Math.min(1.0, categoryFreq / (double) maxCategoryFreq);
         double sales = maxCompleted <= 0 ? 0 : Math.log1p(Math.max(0, completedCount)) / Math.log1p(maxCompleted);
-        double rating = Math.max(0, Math.min(1.0, (ratingAvg == null ? 4.6 : ratingAvg) / 5.0));
+        double rating = ratingScore(ratingAvg);
         double on = online ? 1.0 : 0.28;
         if (!hasHistory) {
             return 0.45 * dist + 0.30 * sales + 0.20 * rating + 0.05 * on;
         }
         return W_DISTANCE * dist + W_AFFINITY * aff + W_SALES * sales + W_RATING * rating + W_ONLINE * on;
+    }
+
+    /**
+     * 评分项：均分线性映射后再加大差评惩罚（&lt;4.0 额外 ×0.65，并平方压低）。
+     */
+    public static double ratingScore(Double ratingAvg) {
+        double avg = ratingAvg == null ? 4.6 : Math.max(0, Math.min(5.0, ratingAvg));
+        double linear = avg / 5.0;
+        if (avg < 4.0) {
+            linear *= 0.65;
+        }
+        return linear * linear;
     }
 
     public static double distanceScore(double userLat, double userLon, Double shopLat, Double shopLon) {

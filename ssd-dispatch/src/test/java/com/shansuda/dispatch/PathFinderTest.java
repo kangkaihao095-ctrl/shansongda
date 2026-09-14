@@ -1,7 +1,7 @@
 package com.shansuda.dispatch;
 
+import com.shansuda.common.route.CongestionAggregator;
 import com.shansuda.common.route.GridPathFinder;
-import com.shansuda.dispatch.grid.CongestionAggregator;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

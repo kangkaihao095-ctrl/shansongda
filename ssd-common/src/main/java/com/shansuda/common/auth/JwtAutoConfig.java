@@ -10,7 +10,7 @@ public class JwtAutoConfig {
 
     @Bean
     public JwtService jwtService(
-            @Value("${ssd.jwt.secret:change-me-in-prod-please-32chars}") String secret,
+            @Value("${ssd.jwt.secret:${SSD_JWT_SECRET:change-me-in-prod-please-32chars}}") String secret,
             @Value("${ssd.jwt.ttl-seconds:86400}") long ttlSeconds) {
         return new JwtService(secret, ttlSeconds);
     }
@@ -25,7 +25,7 @@ public class JwtAutoConfig {
 
     @Bean
     public FilterRegistrationBean<InternalAuthFilter> internalAuthFilter(
-            @Value("${ssd.internal.token:ssd-internal-local}") String token) {
+            @Value("${ssd.internal.token:${SSD_INTERNAL_TOKEN:ssd-internal-local}}") String token) {
         FilterRegistrationBean<InternalAuthFilter> bean =
                 new FilterRegistrationBean<>(new InternalAuthFilter(token));
         bean.setOrder(0);

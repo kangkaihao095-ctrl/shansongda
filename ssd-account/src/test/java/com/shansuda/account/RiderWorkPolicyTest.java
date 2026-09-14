@@ -27,6 +27,16 @@ class RiderWorkPolicyTest {
         assertFalse(RiderWorkPolicy.canGoOnline(true, today, today));
         assertTrue(RiderWorkPolicy.canGoOnline(true, today, today.plusDays(1)));
         assertTrue(RiderWorkPolicy.canGoOnline(false, today, today));
+        assertFalse(RiderWorkPolicy.canAccept(true, 100, 28800));
+        assertFalse(RiderWorkPolicy.canAccept(false, 28800, 28800));
+        assertTrue(RiderWorkPolicy.canAccept(false, 100, 28800));
+        assertFalse(RiderWorkPolicy.canGrab("OFFLINE", false, 100, 28800));
+        assertFalse(RiderWorkPolicy.canGrab("ONLINE", true, 100, 28800));
+        assertTrue(RiderWorkPolicy.canGrab("ONLINE", false, 100, 28800));
+        assertEquals("NEED_ONLINE", RiderWorkPolicy.grabDenyCode("OFFLINE", false, 100, 28800));
+        assertEquals("请先上线", RiderWorkPolicy.grabDenyReason("NEED_ONLINE"));
+        assertEquals("WORK_LIMIT", RiderWorkPolicy.grabDenyCode("ONLINE", true, 100, 28800));
+        assertEquals("WORK_LIMIT", RiderWorkPolicy.grabDenyCode("OFFLINE", false, 28800, 28800));
     }
 
     @Test

@@ -60,6 +60,7 @@ function onClose() {
   <Teleport to="body">
     <div v-if="open" class="coupon-mask" @click.self="onClose">
       <div class="coupon-sheet" @click.stop>
+        <div class="sheet-handle"></div>
         <div v-if="done" class="coupon-petals" aria-hidden="true">
           <i v-for="p in petals" :key="p" :style="{ '--i': p }"></i>
         </div>

@@ -6,6 +6,8 @@ public final class ErrorCodes {
     public static final String DUPLICATE_PHONE = "DUPLICATE_PHONE";
     public static final String BAD_CREDENTIALS = "BAD_CREDENTIALS";
     public static final String ROLE_DENIED = "ROLE_DENIED";
+    public static final String NEED_ONLINE = "NEED_ONLINE";
+    public static final String WORK_LIMIT = "WORK_LIMIT";
 
     private ErrorCodes() {
     }

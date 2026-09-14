@@ -4,9 +4,10 @@ import com.shansuda.account.service.AccountService;
 import com.shansuda.account.service.MemberService;
 import com.shansuda.account.service.ReviewService;
 import com.shansuda.account.service.RiderProfileService;
+import com.shansuda.account.work.RiderChartService;
 import com.shansuda.common.api.ApiResult;
-import jakarta.validation.constraints.NotBlank;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,22 +29,25 @@ public class AccountController {
     private final AccountService accountService;
     private final ReviewService reviewService;
     private final RiderProfileService riderProfileService;
+    private final RiderChartService riderChartService;
     private final MemberService memberService;
     private final String amapKey;
 
     public AccountController(AccountService accountService, ReviewService reviewService,
-                             RiderProfileService riderProfileService, MemberService memberService,
+                             RiderProfileService riderProfileService, RiderChartService riderChartService,
+                             MemberService memberService,
                              @Value("${ssd.amap.key:}") String amapKey) {
         this.accountService = accountService;
         this.reviewService = reviewService;
         this.riderProfileService = riderProfileService;
+        this.riderChartService = riderChartService;
         this.memberService = memberService;
         this.amapKey = amapKey;
     }
 
     @PostMapping("/auth/register")
     public ApiResult<Map<String, Object>> register(@RequestBody AuthRequest req) {
-        return ApiResult.ok(accountService.register(req.phone(), req.password(), req.role()));
+        return ApiResult.ok(accountService.register(req.phone(), req.password(), req.role(), req.displayName()));
     }
 
     @PostMapping("/auth/login")
@@ -104,6 +108,16 @@ public class AccountController {
         return ApiResult.ok(accountService.workStats());
     }
 
+    @GetMapping("/riders/me/charts")
+    public ApiResult<Map<String, Object>> riderCharts(@RequestParam(required = false) Integer days) {
+        return ApiResult.ok(riderChartService.charts(days));
+    }
+
+    @PutMapping("/riders/me/settings")
+    public ApiResult<Map<String, Object>> riderSettings(@RequestBody RiderSettingsRequest req) {
+        return ApiResult.ok(accountService.updateRiderSettings(req.autoReport(), req.intervalSeconds()));
+    }
+
     @GetMapping("/riders/me/profile")
     public ApiResult<Map<String, Object>> myProfile() {
         return ApiResult.ok(riderProfileService.meProfile());
@@ -134,6 +148,23 @@ public class AccountController {
         return ApiResult.ok(accountService.updateMerchantSettings(req.autoAccept()));
     }
 
+    @GetMapping("/merchants/me")
+    public ApiResult<Map<String, Object>> myMerchant() {
+        return ApiResult.ok(accountService.myMerchant());
+    }
+
+    @PutMapping("/merchants/me")
+    public ApiResult<Map<String, Object>> updateMerchant(@RequestBody MerchantProfileRequest req) {
+        String name = req.name() != null ? req.name() : req.shopName();
+        return ApiResult.ok(accountService.updateMerchantProfile(
+                name, req.address(), req.category(), req.intro(), req.coverUrl(), req.phone()));
+    }
+
+    @PostMapping("/merchants/me/cover")
+    public ApiResult<Map<String, Object>> merchantCover(@RequestParam("file") MultipartFile file) {
+        return ApiResult.ok(accountService.updateMerchantCover(file));
+    }
+
     @GetMapping("/merchants")
     public ApiResult<Map<String, Object>> merchants(
             @RequestParam(required = false) String category,
@@ -147,9 +178,10 @@ public class AccountController {
     public ApiResult<Map<String, Object>> recommend(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(required = false) Integer size,
-            @RequestParam(required = false) Integer limit) {
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) String q) {
         int sz = size != null ? size : (limit != null ? limit : 12);
-        return ApiResult.ok(accountService.recommend(page, sz));
+        return ApiResult.ok(accountService.recommend(page, sz, q));
     }
 
     @GetMapping("/merchants/{id}")
@@ -257,6 +289,31 @@ public class AccountController {
         return ApiResult.ok(accountService.addAddress(req.lat(), req.lon(), req.detail()));
     }
 
+    @GetMapping("/me/addresses")
+    public ApiResult<List<Map<String, Object>>> listAddresses() {
+        return ApiResult.ok(accountService.listAddresses());
+    }
+
+    @PutMapping("/me/addresses/{id}")
+    public ApiResult<Map<String, Object>> updateAddress(@PathVariable long id, @RequestBody AddressRequest req) {
+        return ApiResult.ok(accountService.updateAddress(id, req.lat(), req.lon(), req.detail()));
+    }
+
+    @DeleteMapping("/me/addresses/{id}")
+    public ApiResult<Map<String, Object>> deleteAddress(@PathVariable long id) {
+        return ApiResult.ok(accountService.deleteAddress(id));
+    }
+
+    @GetMapping("/me/cart")
+    public ApiResult<Map<String, Object>> getCart() {
+        return ApiResult.ok(accountService.getCart());
+    }
+
+    @PutMapping("/me/cart")
+    public ApiResult<Map<String, Object>> putCart(@RequestBody CartRequest req) {
+        return ApiResult.ok(accountService.putCart(req.merchantId(), req.shopName(), req.coverUrl(), req.items()));
+    }
+
     @PutMapping("/me/addresses/{id}/default")
     public ApiResult<Map<String, Object>> defaultAddress(@PathVariable long id) {
         return ApiResult.ok(accountService.setDefaultAddress(id));
@@ -267,7 +324,7 @@ public class AccountController {
         return ApiResult.ok(accountService.updateMyLocation(req.lat(), req.lon(), req.detail()));
     }
 
-    public record AuthRequest(@NotBlank String phone, @NotBlank String password, String role) {
+    public record AuthRequest(String phone, String password, String role, String displayName) {
     }
 
     public record ProfileRequest(String displayName) {
@@ -288,7 +345,17 @@ public class AccountController {
     public record MerchantSettingsRequest(Boolean autoAccept) {
     }
 
+    public record RiderSettingsRequest(Boolean autoReport, Integer intervalSeconds) {
+    }
+
+    public record MerchantProfileRequest(String name, String shopName, String address, String category,
+                                         String intro, String coverUrl, String phone) {
+    }
+
     public record AddressRequest(double lat, double lon, String detail) {
+    }
+
+    public record CartRequest(Long merchantId, String shopName, String coverUrl, List<Map<String, Object>> items) {
     }
 
     public record UserLocationRequest(double lat, double lon, String detail) {

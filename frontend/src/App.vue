@@ -1,6 +1,13 @@
 <script setup>
+import { watch } from 'vue'
 import { session } from './session'
 import DeliveryFloat from './components/DeliveryFloat.vue'
+import { bootRiderLive, stopRiderLive } from './riderLive'
+
+watch(() => session.me?.role, (role) => {
+  if (role === 'RIDER') bootRiderLive()
+  else stopRiderLive()
+}, { immediate: true })
 </script>
 
 <template>

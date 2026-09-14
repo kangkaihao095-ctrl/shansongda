@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { yuanExact } from '../brand'
+import { chartLabelStep } from '../riderReport'
 
 const props = defineProps({
   series: { type: Array, default: () => [] },
@@ -36,7 +37,7 @@ const chartKey = computed(() => (props.series || []).map((r) => r.date + r.gmvCe
 
 function label(p, i) {
   const n = points.value.length
-  const step = n > 16 ? Math.ceil(n / 6) : 1
+  const step = chartLabelStep(n)
   if (i !== 0 && i !== n - 1 && i % step !== 0) return ''
   return p.label
 }
@@ -55,13 +56,16 @@ function showTip(p, e) {
   <div ref="wrap" class="chart-wrap" @mouseleave="tip = null">
     <svg :viewBox="`0 0 ${w} ${h}`" class="chart">
       <defs>
-        <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="currentColor" stop-opacity="0.35"/>
-          <stop offset="100%" stop-color="currentColor" stop-opacity="0.02"/>
+        <linearGradient id="gmv-area" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="currentColor" stop-opacity="0.42"/>
+          <stop offset="100%" stop-color="currentColor" stop-opacity="0.03"/>
         </linearGradient>
       </defs>
+      <g opacity="0.12">
+        <line v-for="n in 4" :key="'g' + n" x1="24" :x2="336" :y1="24 + n * 28" :y2="24 + n * 28" stroke="currentColor" stroke-width="1"/>
+      </g>
       <g :key="chartKey">
-        <path class="chart-area" :d="area" fill="url(#area)"/>
+        <path class="chart-area" :d="area" fill="url(#gmv-area)"/>
         <path class="chart-line" :d="path" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
       </g>
       <circle
@@ -76,7 +80,17 @@ function showTip(p, e) {
         @mousemove="showTip(p, $event)"
         @click="showTip(p, $event)"
       />
-      <text v-for="(p, i) in points" :key="'t' + p.date" :x="p.x" :y="h - 6" text-anchor="middle" font-size="9" fill="currentColor" opacity="0.7">
+      <text
+        v-for="(p, i) in points"
+        :key="'t' + p.date"
+        :x="p.x"
+        :y="h - 6"
+        text-anchor="end"
+        font-size="9"
+        fill="currentColor"
+        opacity="0.7"
+        :transform="points.length > 12 ? `rotate(-38 ${p.x} ${h - 6})` : undefined"
+      >
         {{ label(p, i) }}
       </text>
     </svg>
@@ -89,7 +103,7 @@ function showTip(p, e) {
 
 <style scoped>
 .chart-wrap { position: relative; }
-.chart { width: 100%; height: 170px; color: #FF6A00; }
+.chart { width: 100%; height: 176px; color: #FF6A00; }
 .chart-line { stroke-dasharray: 720; stroke-dashoffset: 720; animation: draw-line .55s ease forwards; }
 .chart-area { opacity: 0; animation: fade-area .45s .1s ease forwards; }
 .chart-dot { cursor: pointer; }

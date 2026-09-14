@@ -4,6 +4,7 @@ import com.shansuda.account.service.AccountService;
 import com.shansuda.account.service.MemberService;
 import com.shansuda.account.service.ReviewService;
 import com.shansuda.account.service.RiderProfileService;
+import com.shansuda.account.work.RiderWorkService;
 import com.shansuda.common.api.ApiResult;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,13 +27,16 @@ public class InternalAccountController {
     private final ReviewService reviewService;
     private final RiderProfileService riderProfileService;
     private final MemberService memberService;
+    private final RiderWorkService riderWorkService;
 
     public InternalAccountController(AccountService accountService, ReviewService reviewService,
-                                     RiderProfileService riderProfileService, MemberService memberService) {
+                                     RiderProfileService riderProfileService, MemberService memberService,
+                                     RiderWorkService riderWorkService) {
         this.accountService = accountService;
         this.reviewService = reviewService;
         this.riderProfileService = riderProfileService;
         this.memberService = memberService;
+        this.riderWorkService = riderWorkService;
     }
 
     @GetMapping("/merchants/{id}")
@@ -42,13 +46,16 @@ public class InternalAccountController {
 
     @PostMapping("/coupons/quote")
     public ApiResult<Map<String, Object>> quoteCoupon(@RequestBody QuoteBody body) {
-        return ApiResult.ok(accountService.quoteCoupon(body.userId(), body.couponId(), body.merchantId(), body.goodsCents()));
+        int freight = body.freightCents() == null ? 0 : body.freightCents();
+        return ApiResult.ok(accountService.quoteCoupon(body.userId(), body.couponId(), body.merchantId(),
+                body.goodsCents(), freight));
     }
 
     @PostMapping("/coupons/options")
     public ApiResult<Map<String, Object>> couponOptions(@RequestBody QuoteBody body) {
+        int freight = body.freightCents() == null ? 0 : body.freightCents();
         Map<String, Object> wrap = new LinkedHashMap<>();
-        wrap.put("items", accountService.couponOptions(body.userId(), body.merchantId(), body.goodsCents()));
+        wrap.put("items", accountService.couponOptions(body.userId(), body.merchantId(), body.goodsCents(), freight));
         return ApiResult.ok(wrap);
     }
 
@@ -63,7 +70,7 @@ public class InternalAccountController {
         return ApiResult.ok(accountService.grantFromActivity(body.userId(), body.activityId(), body.couponCode()));
     }
 
-    public record QuoteBody(long userId, long couponId, long merchantId, int goodsCents) {
+    public record QuoteBody(long userId, long couponId, long merchantId, int goodsCents, Integer freightCents) {
     }
 
     public record UseBody(long userId, long couponId, long orderId) {
@@ -98,6 +105,16 @@ public class InternalAccountController {
     @GetMapping("/riders/{id}/profile")
     public ApiResult<Map<String, Object>> riderProfile(@PathVariable long id) {
         return ApiResult.ok(riderProfileService.card(id));
+    }
+
+    @GetMapping("/riders/{id}/can-accept")
+    public ApiResult<Map<String, Object>> canAccept(@PathVariable long id) {
+        return ApiResult.ok(riderWorkService.canAccept(id));
+    }
+
+    @GetMapping("/members/{userId}")
+    public ApiResult<Map<String, Object>> member(@PathVariable long userId) {
+        return ApiResult.ok(memberService.card(userId));
     }
 
     @PostMapping("/riders/{id}/completed")

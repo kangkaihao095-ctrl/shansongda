@@ -11,6 +11,7 @@ const router = useRouter()
 const quote = ref(null)
 const couponId = ref(null)
 const addressId = ref(null)
+const expectSlot = ref('ASAP')
 const busy = ref(false)
 const picker = ref(false)
 const booted = ref(false)
@@ -80,7 +81,8 @@ async function submit() {
         addressId: addressId.value,
         items: cart.items.map((it) => ({ skuId: it.skuId, qty: it.qty, priceCents: it.priceCents })),
         couponId: couponId.value,
-        clientPayCents: quote.value?.payCents
+        clientPayCents: quote.value?.payCents,
+        expectDeliverAt: expectSlot.value
       }
     })
     clearCart()
@@ -97,9 +99,17 @@ async function submit() {
   <div class="phone page">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router)">← 返回</button>
-      <b>确认订单</b>
+      <b class="page-title" style="font-size:18px">确认订单</b>
     </header>
     <div class="phone-body no-tab pad">
+      <div class="card" style="margin-bottom:12px">
+        <div class="muted" style="margin-bottom:4px">收货地址</div>
+        <button v-for="a in addresses" :key="a.id" class="addr-pick" :class="{ on: addressId === a.id }" type="button" @click="pickAddress(a.id)">
+          <b>{{ a.detail }}</b>
+          <div class="muted">{{ a.isDefault ? '默认地址' : '点选使用' }}</div>
+        </button>
+        <p v-if="!addresses.length" class="muted">暂无地址，请到个人中心添加</p>
+      </div>
       <div class="card" style="margin-bottom:12px">
         <b>{{ cart.shopName }}</b>
         <div v-for="it in cart.items" :key="it.skuId" class="row" style="margin-top:10px">
@@ -109,11 +119,11 @@ async function submit() {
         </div>
       </div>
       <div class="card" style="margin-bottom:12px">
-        <b>收货地址</b>
-        <button v-for="a in addresses" :key="a.id" class="coupon-pick" :class="{ on: addressId === a.id }" type="button" @click="pickAddress(a.id)">
-          {{ a.detail }}{{ a.isDefault ? ' · 默认' : '' }}
-        </button>
-        <p v-if="!addresses.length" class="muted">暂无地址，请到个人中心添加</p>
+        <b>送达时间</b>
+        <div class="row" style="margin-top:8px">
+          <button class="coupon-pick" :class="{ on: expectSlot === 'ASAP' }" type="button" @click="expectSlot = 'ASAP'">尽快送达</button>
+          <button class="coupon-pick" :class="{ on: expectSlot === 'WITHIN_1H' }" type="button" @click="expectSlot = 'WITHIN_1H'">1 小时内</button>
+        </div>
       </div>
       <div class="card" style="margin-bottom:12px">
         <div class="row" style="justify-content:space-between">
@@ -135,17 +145,21 @@ async function submit() {
             @click="c.available && pick(c.couponId || c.id)"
           >
             <div>{{ c.name }} · {{ c.available ? '应付 ' + yuan(c.payCents) : c.reason }}</div>
-            <div class="muted">满 {{ yuan(c.minSpendCents) }} {{ c.available ? '可用' : '' }}</div>
+            <div class="muted">{{ c.coversFreight === true ? '可抵运费' : '只抵商品、不抵运费' }} · 满 {{ yuan(c.minSpendCents) }} {{ c.available ? '可用' : '' }}</div>
           </button>
         </div>
       </div>
       <div class="card">
         <div class="row" style="justify-content:space-between"><span>商品合计</span><span>{{ yuan(quote?.goodsAmountCents || goodsCents()) }}</span></div>
+        <div v-if="quote?.shopPromoCents" class="row" style="justify-content:space-between"><span>店铺满减</span><span>-{{ yuan(quote.shopPromoCents) }}</span></div>
+        <div v-if="quote?.shopPromoNote" class="muted">{{ quote.shopPromoNote }}</div>
         <div class="row" style="justify-content:space-between"><span>配送费</span><span>{{ yuan(quote?.freightCents) }}</span></div>
+        <div v-if="quote?.memberFreightOffCents" class="muted">含闪会员运费减免 {{ yuan(quote.memberFreightOffCents) }} · {{ quote.freightStrategy }}</div>
         <div class="row" style="justify-content:space-between"><span>优惠券抵扣</span><span>-{{ yuan(quote?.discountCents) }}</span></div>
-        <div class="row" style="justify-content:space-between;margin-top:8px"><b>应付</b><b>{{ yuan(quote?.payCents) }}</b></div>
+        <div class="muted">{{ quote?.couponCoversFreight ? '本券可抵运费' : '平台券默认只抵商品；运费券除外' }}</div>
+        <div class="row" style="justify-content:space-between;margin-top:8px"><b>应付</b><b class="num" style="font-size:20px">{{ yuan(quote?.payCents) }}</b></div>
       </div>
-      <button class="btn" style="width:100%;margin-top:18px" :disabled="busy || !quote" @click="submit">提交订单并支付</button>
+      <button class="btn checkout-bar" style="width:100%" :disabled="busy || !quote" @click="submit">提交订单并支付</button>
     </div>
   </div>
 </template>

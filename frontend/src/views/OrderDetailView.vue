@@ -16,7 +16,11 @@ import {
 } from '../status'
 import { api } from '../api'
 import { imgSrc, onImgError } from '../img'
+import { fillFromSnapshot } from '../cart'
+import { shopIsOpen } from '../merchant'
+import { riderCanGrabNew, riderLive } from '../riderLive'
 import { goBack, session, toast } from '../session'
+import { openNavi } from '../navi'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,7 +37,12 @@ const snap = computed(() => snapshotOf(track.value))
 const items = computed(() => snap.value.items || [])
 const points = computed(() => {
   const r = track.value?.route || {}
-  return [...(r.riderToMerchant?.points || []), ...(r.merchantToUser?.points || [])]
+  return r.points?.length ? r.points : [...(r.riderToUser?.points || []), ...(r.riderToMerchant?.points || []), ...(r.merchantToUser?.points || [])]
+})
+const segments = computed(() => {
+  const r = track.value?.route || {}
+  if (r.segments?.length) return r.segments
+  return [...(r.riderToUser?.segments || []), ...(r.riderToMerchant?.segments || []), ...(r.merchantToUser?.segments || [])]
 })
 const rider = computed(() => {
   const r = track.value?.rider
@@ -65,6 +74,8 @@ const canTip = computed(() => session.me?.role === 'USER' && !!track.value?.canT
 const riderProfile = computed(() => track.value?.riderProfile || (track.value?.rider?.bio ? track.value.rider : null))
 const tippedGift = computed(() => tipGiftOf(track.value?.tipGiftCode) || (track.value?.tipGiftLabel ? { label: track.value.tipGiftLabel } : null))
 const showUserActions = computed(() => session.me?.role === 'USER' && (canReview.value || (canRefund.value && track.value?.status === 'COMPLETED')))
+const merchantOnline = computed(() => shopIsOpen(session.me?.merchant))
+const isMerchant = computed(() => session.me?.role === 'MERCHANT')
 
 async function load() {
   try {
@@ -111,6 +122,20 @@ async function confirmCancel() {
   }
 }
 
+async function grabOrder() {
+  if (!riderCanGrabNew.value) {
+    toast(riderLive.work.forcedOffline ? '今日工时已满或已强制下线，不可接单' : '请先上线', 'err')
+    return
+  }
+  try {
+    await api('/api/orders/' + track.value.id + '/grab', { method: 'POST' })
+    toast('抢单成功')
+    await load()
+  } catch (e) {
+    toast(e.message, 'err')
+  }
+}
+
 function copyId() {
   navigator.clipboard?.writeText(String(track.value.id))
   toast('订单号已复制')
@@ -140,10 +165,10 @@ onUnmounted(() => clearInterval(timer))
 </script>
 
 <template>
-  <div class="phone page">
+  <div class="phone page" :class="{ 'theme-merchant': isMerchant, 'theme-rider': session.me?.role === 'RIDER', 'is-closed': isMerchant && !merchantOnline }">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router)">← 返回</button>
-      <b>订单详情</b>
+      <b class="page-title" style="font-size:18px">订单详情</b>
       <RoleBadge />
     </header>
     <div class="phone-body no-tab pad tight" v-if="track">
@@ -159,10 +184,12 @@ onUnmounted(() => clearInterval(timer))
       <SsdMap
         v-if="showMap"
         :points="points"
+        :segments="segments"
         :rider="rider"
         :merchant="merchant"
         :user="user"
         :eta="etaText(track.etaMs, track.status)"
+        :hint="track.route?.trafficHint"
         tall
       />
       <div class="card" style="margin-top:12px">
@@ -182,6 +209,14 @@ onUnmounted(() => clearInterval(timer))
         <div v-if="track.penaltyCents" class="muted">违约金 {{ yuan(track.penaltyCents) }}</div>
         <div v-if="track.payStatus === 'REFUNDED'" class="muted">退款 {{ yuan(payCents) }} 原路返回{{ payChannelText(track.payChannel) }}</div>
         <div class="muted" style="margin-top:8px">{{ track.addressDetail }}</div>
+        <div v-if="track.expectDeliverLabel" class="muted">{{ track.expectDeliverLabel }}</div>
+        <div v-if="track.riderIssueText" class="muted" style="color:#C43D2F">骑手上报：{{ track.riderIssueText }}</div>
+      </div>
+      <div v-if="session.me?.role === 'USER' && track.status === 'COMPLETED'" class="row" style="margin-top:10px">
+        <button class="btn" type="button" @click="() => { const s = snapshotOf(track); fillFromSnapshot(track.merchantId, s.shopName, track.coverUrl || s.coverUrl, s.items || []); toast('已加入购物车'); router.push('/checkout') }">再来一单</button>
+      </div>
+      <div v-if="session.me?.role === 'RIDER' && ['ACCEPTED','ARRIVED','DELIVERING'].includes(track.status)" class="row" style="margin-top:10px">
+        <button class="btn" type="button" @click="openNavi(track.status === 'DELIVERING' || track.status === 'ARRIVED' ? track.userLat : track.merchantLat, track.status === 'DELIVERING' || track.status === 'ARRIVED' ? track.userLon : track.merchantLon, track.addressDetail)">导航</button>
       </div>
       <RiderCard v-if="riderProfile" :profile="riderProfile" compact style="margin-top:12px" />
       <div v-if="canTip" class="card" style="margin-top:12px">
@@ -223,7 +258,8 @@ onUnmounted(() => clearInterval(timer))
         <button class="btn ghost" @click="formOpen='cancel'">取消订单</button>
       </div>
       <div v-if="canRiderGrab(session.me?.role, track.status)" class="row" style="margin-top:10px">
-        <button class="btn" @click="api('/api/orders/'+track.id+'/grab',{method:'POST'}).then(()=>{toast('抢单成功');load()}).catch(e=>toast(e.message,'err'))">{{ riderActionText(track.status) }}</button>
+        <p v-if="!riderCanGrabNew" class="muted" style="width:100%;margin:0 0 8px">{{ riderLive.work.forcedOffline ? '今日工时已满，不可再抢新单' : '请先上线后再抢单' }}</p>
+        <button class="btn" :disabled="!riderCanGrabNew" @click="grabOrder">{{ riderCanGrabNew ? riderActionText(track.status) : '请先上线' }}</button>
       </div>
       <div v-if="canRiderArrive(session.me?.role, track.status)" class="row" style="margin-top:10px">
         <button class="btn" @click="api('/api/orders/'+track.id+'/arrive',{method:'POST'}).then(load).catch(e=>toast(e.message,'err'))">{{ riderActionText(track.status) }}</button>
@@ -235,7 +271,7 @@ onUnmounted(() => clearInterval(timer))
         <button class="btn" @click="api('/api/orders/'+track.id+'/complete',{method:'POST'}).then(()=>{toast('已送达');load()}).catch(e=>toast(e.message,'err'))">{{ riderActionText(track.status) }}</button>
       </div>
       <div v-if="canMerchantAccept(session.me?.role, track.status)" class="row" style="margin-top:10px">
-        <button class="btn" @click="api('/api/orders/'+track.id+'/merchant-accept',{method:'POST'}).then(load).catch(e=>toast(e.message,'err'))">接单备餐</button>
+        <button class="btn" :disabled="!merchantOnline" :class="{ dim: !merchantOnline }" @click="!merchantOnline ? toast('店铺已打烊，暂不可接新单', 'err') : api('/api/orders/'+track.id+'/merchant-accept',{method:'POST'}).then(load).catch(e=>toast(e.message,'err'))">{{ merchantOnline ? '接单备餐' : '已打烊' }}</button>
         <button class="btn ghost" @click="api('/api/orders/'+track.id+'/merchant-reject',{method:'POST',body:{reasonCode:'STOCK',reasonText:'暂无法出餐'}}).then(load).catch(e=>toast(e.message,'err'))">拒绝</button>
       </div>
       <div v-if="session.me?.role==='USER' && track.status==='COMPLETED' && track.reviewed" class="card" style="margin-top:12px">

@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { api } from './api'
 
 const KEY = 'ssd.cart'
 
@@ -10,6 +11,7 @@ export const cart = reactive({
 })
 
 hydrate()
+let syncTimer
 
 function hydrate() {
   try {
@@ -32,6 +34,76 @@ function persist() {
     coverUrl: cart.coverUrl,
     items: cart.items
   }))
+  clearTimeout(syncTimer)
+  syncTimer = setTimeout(() => { syncCartToServer() }, 800)
+}
+
+export async function syncCartToServer() {
+  try {
+    if (!localStorage.getItem('ssd.token')) return
+    await api('/api/me/cart', {
+      method: 'PUT',
+      body: {
+        merchantId: cart.merchantId,
+        shopName: cart.shopName,
+        coverUrl: cart.coverUrl,
+        items: cart.items
+      }
+    })
+  } catch {
+    /* 未登录或草稿失败不挡加购 */
+  }
+}
+
+export async function mergeServerCart() {
+  let server
+  try {
+    server = (await api('/api/me/cart')).data
+  } catch {
+    return
+  }
+  const serverItems = Array.isArray(server?.items) ? server.items : []
+  if (!cart.items.length && serverItems.length) {
+    cart.merchantId = server.merchantId ?? null
+    cart.shopName = server.shopName || ''
+    cart.coverUrl = server.coverUrl || ''
+    cart.items = serverItems
+    localStorage.setItem(KEY, JSON.stringify({
+      merchantId: cart.merchantId,
+      shopName: cart.shopName,
+      coverUrl: cart.coverUrl,
+      items: cart.items
+    }))
+    return
+  }
+  if (cart.items.length && serverItems.length && cart.merchantId === server.merchantId) {
+    const map = new Map()
+    for (const it of serverItems) map.set(it.skuId, { ...it })
+    for (const it of cart.items) {
+      const hit = map.get(it.skuId)
+      if (!hit) map.set(it.skuId, { ...it })
+      else hit.qty = Math.max(Number(hit.qty) || 1, Number(it.qty) || 1)
+    }
+    cart.items = [...map.values()]
+    persist()
+    return
+  }
+  if (cart.items.length) persist()
+}
+
+export function fillFromSnapshot(merchantId, shopName, coverUrl, items) {
+  cart.merchantId = merchantId
+  cart.shopName = shopName || ''
+  cart.coverUrl = coverUrl || ''
+  cart.items = (items || []).map((it) => ({
+    skuId: it.skuId,
+    name: it.name,
+    priceCents: it.priceCents,
+    imageUrl: it.imageUrl,
+    spec: it.spec,
+    qty: it.qty || 1
+  }))
+  persist()
 }
 
 export function setShop(merchant) {

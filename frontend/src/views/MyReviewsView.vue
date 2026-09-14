@@ -7,6 +7,7 @@ import StarPicker from '../components/StarPicker.vue'
 import { api } from '../api'
 import { onImgError } from '../img'
 import { goBack, toast } from '../session'
+import EmptyState from '../components/EmptyState.vue'
 
 const router = useRouter()
 const items = ref([])
@@ -45,7 +46,7 @@ onMounted(() => load(true))
   <div class="phone page">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router, '/me')">← 返回</button>
-      <b>我的评价</b>
+      <b class="page-title" style="font-size:18px">我的评价</b>
     </header>
     <div class="phone-body pad">
       <article
@@ -70,7 +71,7 @@ onMounted(() => load(true))
         <div class="muted" style="margin-top:6px">{{ r.skuNames }}</div>
       </article>
       <button v-if="hasNext" class="btn ghost" style="width:100%" :disabled="loading" @click="load(false)">加载更多</button>
-      <p v-if="!items.length && !loading" class="muted">还没有评价，完成订单后可从订单详情去评价。</p>
+      <EmptyState v-if="!items.length && !loading" title="还没有评价" hint="完成订单后可从订单详情去评价" />
     </div>
     <TabBar />
   </div>

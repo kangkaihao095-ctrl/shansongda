@@ -2,8 +2,15 @@ server:
   port: 18083
 
 ssd:
+  mode: ${SSD_MODE:auto}
   jwt:
     secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  internal:
+    token: ${SSD_INTERNAL_TOKEN:ssd-internal-local}
+  neo4j:
+    uri: ${SSD_NEO4J_URI:bolt://127.0.0.1:7687}
+    username: ${SSD_NEO4J_USER:neo4j}
+    password: ${SSD_NEO4J_PASSWORD:shansuda}
   leaf:
     url: jdbc:mysql://127.0.0.1:3316/ssd_leaf?useSSL=false&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&connectTimeout=8000&socketTimeout=20000
     username: shansuda
@@ -13,10 +20,20 @@ ssd:
     activity: http://127.0.0.1:18082
   recommend:
     max-km: ${SSD_RECOMMEND_MAX_KM:5}
+  order:
+    merchant-accept-timeout-min: ${SSD_MERCHANT_ACCEPT_TIMEOUT_MIN:15}
+  dispatch:
+    congestion-ms: ${SSD_CONGESTION_MS:60000}
+  amap:
+    # 与 account GET /map/config 共用。order 用来拉交通态势写边权，需开通 Web 服务「交通态势」。
+    key: ${SSD_AMAP_KEY:}
 
 spring:
   application:
     name: ssd-order
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.neo4j.Neo4jAutoConfiguration
   datasource:
     driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
     url: jdbc:shardingsphere:classpath:shardingsphere.yaml

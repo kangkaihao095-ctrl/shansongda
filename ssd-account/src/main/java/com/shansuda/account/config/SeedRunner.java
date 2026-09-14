@@ -4,10 +4,12 @@ import com.shansuda.account.domain.AppUser;
 import com.shansuda.account.domain.Coupon;
 import com.shansuda.account.domain.Merchant;
 import com.shansuda.account.domain.MerchantSku;
+import com.shansuda.account.domain.Rider;
 import com.shansuda.account.repo.AppUserRepo;
 import com.shansuda.account.repo.CouponRepo;
 import com.shansuda.account.repo.MerchantRepo;
 import com.shansuda.account.repo.MerchantSkuRepo;
+import com.shansuda.account.repo.RiderRepo;
 import com.shansuda.account.repo.UserAddressRepo;
 import com.shansuda.common.catalog.CatalogImages;
 import org.slf4j.Logger;
@@ -37,16 +39,19 @@ public class SeedRunner implements ApplicationRunner {
     private final MerchantSkuRepo skuRepo;
     private final CouponRepo couponRepo;
     private final UserAddressRepo addressRepo;
+    private final RiderRepo riderRepo;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
     public SeedRunner(DataSource dataSource, AppUserRepo userRepo, MerchantRepo merchantRepo,
-                      MerchantSkuRepo skuRepo, CouponRepo couponRepo, UserAddressRepo addressRepo) {
+                      MerchantSkuRepo skuRepo, CouponRepo couponRepo, UserAddressRepo addressRepo,
+                      RiderRepo riderRepo) {
         this.dataSource = dataSource;
         this.userRepo = userRepo;
         this.merchantRepo = merchantRepo;
         this.skuRepo = skuRepo;
         this.couponRepo = couponRepo;
         this.addressRepo = addressRepo;
+        this.riderRepo = riderRepo;
     }
 
     @Override
@@ -79,9 +84,18 @@ public class SeedRunner implements ApplicationRunner {
             seedShops();
             seedSkus();
             seedCoupons();
-            seedRiderProfiles();
         } catch (Exception ex) {
             log.warn("补充商家商品失败: {}", ex.getMessage());
+        }
+        try {
+            seedDemoRiders();
+        } catch (Exception ex) {
+            log.warn("演示骑手种子失败: {}", ex.getMessage());
+        }
+        try {
+            seedRiderProfiles();
+        } catch (Exception ex) {
+            log.warn("骑手简介种子失败: {}", ex.getMessage());
         }
     }
 
@@ -99,6 +113,10 @@ public class SeedRunner implements ApplicationRunner {
             safe(s, "ALTER TABLE merchant ADD COLUMN rating_count INT NOT NULL DEFAULT 0");
             safe(s, "ALTER TABLE merchant ADD COLUMN completed_count INT NOT NULL DEFAULT 0");
             safe(s, "ALTER TABLE merchant ADD COLUMN auto_accept TINYINT(1) NOT NULL DEFAULT 0");
+            safe(s, "ALTER TABLE merchant ADD COLUMN intro VARCHAR(512) NULL");
+            safe(s, "ALTER TABLE merchant ADD COLUMN phone VARCHAR(32) NULL");
+            safe(s, "ALTER TABLE rider ADD COLUMN auto_report TINYINT(1) NOT NULL DEFAULT 0");
+            safe(s, "ALTER TABLE rider ADD COLUMN auto_report_interval_sec INT NOT NULL DEFAULT 5");
             safe(s, "ALTER TABLE merchant_sku ADD COLUMN description VARCHAR(255) NULL");
             safe(s, "ALTER TABLE merchant_sku ADD COLUMN detail VARCHAR(512) NULL");
             safe(s, "ALTER TABLE merchant_sku ADD COLUMN month_sales INT NOT NULL DEFAULT 0");
@@ -138,6 +156,8 @@ public class SeedRunner implements ApplicationRunner {
                       PRIMARY KEY (user_id, work_date)
                     )
                     """);
+            safe(s, "CREATE INDEX idx_rider_lat_lon ON rider (lat, lon)");
+            safe(s, "CREATE INDEX idx_rider_status_geo ON rider (online_status, accept_status, lat, lon)");
             s.execute("""
                     CREATE TABLE IF NOT EXISTS merchant_sku (
                       id BIGINT PRIMARY KEY,
@@ -245,6 +265,26 @@ public class SeedRunner implements ApplicationRunner {
                     )
                     """);
             s.execute("""
+                    CREATE TABLE IF NOT EXISTS user_cart (
+                      user_id BIGINT PRIMARY KEY,
+                      merchant_id BIGINT NULL,
+                      shop_name VARCHAR(128) NULL,
+                      cover_url VARCHAR(512) NULL,
+                      items_json TEXT,
+                      updated_at TIMESTAMP NULL
+                    )
+                    """);
+            s.execute("""
+                    CREATE TABLE IF NOT EXISTS merchant_promo (
+                      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                      merchant_id BIGINT NOT NULL,
+                      min_spend_cents INT NOT NULL DEFAULT 0,
+                      off_cents INT NOT NULL DEFAULT 0,
+                      status VARCHAR(20) NOT NULL DEFAULT 'ONLINE',
+                      UNIQUE KEY uk_merchant_promo (merchant_id)
+                    )
+                    """);
+            s.execute("""
                     CREATE TABLE IF NOT EXISTS member_sub (
                       user_id BIGINT PRIMARY KEY,
                       plan VARCHAR(16) NOT NULL,
@@ -346,14 +386,26 @@ public class SeedRunner implements ApplicationRunner {
                 m.setUserId(user.getId());
                 return m;
             });
-            merchant.setShopName((String) row.get("name"));
-            merchant.setLat((Double) row.get("lat"));
-            merchant.setLon((Double) row.get("lon"));
-            merchant.setAddress((String) row.get("address"));
-            merchant.setCategory((String) row.get("category"));
-            merchant.setCoverUrl(CatalogImages.shopCover(user.getId(), (String) row.get("category")));
-            merchant.setRating((Double) row.get("rating"));
-            merchant.setPromo((String) row.get("promo"));
+            boolean created = merchant.getShopName() == null || merchant.getShopName().isBlank();
+            if (created) {
+                merchant.setShopName((String) row.get("name"));
+                merchant.setLat((Double) row.get("lat"));
+                merchant.setLon((Double) row.get("lon"));
+                merchant.setAddress((String) row.get("address"));
+                merchant.setCategory((String) row.get("category"));
+                merchant.setCoverUrl(CatalogImages.shopCover(user.getId(), (String) row.get("category")));
+                merchant.setRating((Double) row.get("rating"));
+                merchant.setPromo((String) row.get("promo"));
+            }
+            if (merchant.getIntro() == null || merchant.getIntro().isBlank()) {
+                merchant.setIntro(row.get("promo") + "。闪送达同城配送，出餐后按约定路线送达。");
+            }
+            if (merchant.getPhone() == null || merchant.getPhone().isBlank()) {
+                merchant.setPhone("021-63" + phone.substring(Math.max(0, phone.length() - 4)));
+            }
+            if (merchant.getCategory() == null || merchant.getCategory().isBlank()) {
+                merchant.setCategory((String) row.get("category"));
+            }
             if (merchant.getOnlineStatus() == null || merchant.getOnlineStatus().isBlank()) {
                 merchant.setOnlineStatus("ONLINE");
             }
@@ -415,6 +467,8 @@ public class SeedRunner implements ApplicationRunner {
         upsertCoupon(2L, "鲜生满减", shopId("13800000003"), null, "AMOUNT", 3000, 800, 0, 80, start, end, "FRESH_30_8", false, "category");
         upsertCoupon(3L, "全场九折", null, null, "PERCENT", 1500, 0, 10, 200, start, end, "PERCENT_10", false, "percent");
         upsertCoupon(10L, "新客 15 元无门槛", null, null, "AMOUNT", 0, 1500, 0, 9999, start, end, "NEWCOMER_15", false, "newcomer");
+        upsertCoupon(11L, "运费立减 3 元", null, null, "FREIGHT", 0, 300, 0, 9999, start, end, "FREIGHT_3", false, "free");
+        seedShopPromo();
         upsertTemplate("NEWCOMER_15", "新客 15 元无门槛", "NEWCOMER", "AMOUNT", 0, 1500, false, "newcomer", 7 * 86400);
         upsertTemplate("LAPSED_30_20", "满 30 减 20", "LAPSED", "AMOUNT", 3000, 2000, false, "minus", 3 * 86400);
         upsertTemplate("LAPSED_50_25", "满 50 减 25", "LAPSED", "AMOUNT", 5000, 2500, false, "minus", 3 * 86400);
@@ -488,6 +542,13 @@ public class SeedRunner implements ApplicationRunner {
                 ps.executeUpdate();
             }
             try (var ps = c.prepareStatement("""
+                    INSERT IGNORE INTO user_coupon (coupon_id, user_id, status, claimed_at)
+                    VALUES (11, ?, 'UNUSED', NOW())
+                    """)) {
+                ps.setLong(1, userId);
+                ps.executeUpdate();
+            }
+            try (var ps = c.prepareStatement("""
                     INSERT IGNORE INTO coupon_grant_log (grant_key, user_id, scene, created_at)
                     VALUES (?, ?, 'NEWCOMER', NOW())
                     """)) {
@@ -520,6 +581,25 @@ public class SeedRunner implements ApplicationRunner {
         coupon.setMemberOnly(memberOnly);
         coupon.setIcon(icon);
         couponRepo.save(coupon);
+    }
+
+    private void seedShopPromo() {
+        long merchantId = shopId("13800000003");
+        if (merchantId <= 0) {
+            merchantId = 3L;
+        }
+        try (var c = dataSource.getConnection();
+             var ps = c.prepareStatement("""
+                     INSERT INTO merchant_promo (merchant_id, min_spend_cents, off_cents, status)
+                     VALUES (?, 2000, 200, 'ONLINE')
+                     ON DUPLICATE KEY UPDATE min_spend_cents=VALUES(min_spend_cents),
+                       off_cents=VALUES(off_cents), status='ONLINE'
+                     """)) {
+            ps.setLong(1, merchantId);
+            ps.executeUpdate();
+        } catch (Exception ex) {
+            log.warn("店铺满减种子失败: {}", ex.getMessage());
+        }
     }
 
     private void seedLandmarkAddresses() {
@@ -579,6 +659,72 @@ public class SeedRunner implements ApplicationRunner {
         skuRepo.save(sku);
     }
 
+    /**
+     * 黄浦 OSM 范围内补一批演示骑手，密码 demo123456。主演示账号仍是 13800000002，大厅只登该号。
+     * 坐标对齐现有店铺 / 骨架路网，不要堆在同一点。失败只打日志，不阻断启动。
+     */
+    private void seedDemoRiders() {
+        String hash = encoder.encode("demo123456");
+        List<DemoRider> extras = List.of(
+                new DemoRider("13800000021", "陈浩", 31.2392, 121.4908, "ONLINE", "IDLE"),
+                new DemoRider("13800000022", "林小雨", 31.2376, 121.4820, "ONLINE", "IDLE"),
+                new DemoRider("13800000023", "王磊", 31.2324, 121.4742, "ONLINE", "IDLE"),
+                new DemoRider("13800000024", "赵敏", 31.2210, 121.4658, "ONLINE", "IDLE"),
+                new DemoRider("13800000025", "周杰", 31.2346, 121.4798, "ONLINE", "BUSY"),
+                new DemoRider("13800000026", "吴芳", 31.2168, 121.4710, "ONLINE", "IDLE"),
+                new DemoRider("13800000027", "孙强", 31.2330, 121.4772, "ONLINE", "IDLE"),
+                new DemoRider("13800000028", "郑悦", 31.2300, 121.4598, "OFFLINE", "IDLE"),
+                new DemoRider("13800000029", "黄伟", 31.2386, 121.4992, "ONLINE", "IDLE"),
+                new DemoRider("13800000030", "马丽", 31.2358, 121.4876, "ONLINE", "IDLE"),
+                new DemoRider("13800000004", "徐鹏", 31.2272, 121.4868, "OFFLINE", "IDLE")
+        );
+        Instant now = Instant.now();
+        int n = 0;
+        for (DemoRider row : extras) {
+            AppUser user = userRepo.findByPhone(row.phone()).orElse(null);
+            if (user == null) {
+                user = new AppUser();
+                user.setPhone(row.phone());
+                user.setPasswordHash(hash);
+                user.setRole("RIDER");
+                user.setDisplayName(row.name());
+                user.setStatus("ACTIVE");
+                user.setCreatedAt(now);
+                user = userRepo.save(user);
+            } else if (!"RIDER".equals(user.getRole())) {
+                log.warn("跳过演示骑手 {}：已存在角色 {}", row.phone(), user.getRole());
+                continue;
+            } else if (user.getDisplayName() == null || user.getDisplayName().isBlank()
+                    || user.getDisplayName().contains("演示") || user.getDisplayName().equals(user.getPhone())) {
+                user.setDisplayName(row.name());
+                userRepo.save(user);
+            }
+            final long uid = user.getId();
+            Rider rider = riderRepo.findById(uid).orElseGet(() -> {
+                Rider created = new Rider();
+                created.setUserId(uid);
+                created.setVersion(1L);
+                created.setAutoReport(false);
+                created.setAutoReportIntervalSec(5);
+                return created;
+            });
+            rider.setLat(row.lat());
+            rider.setLon(row.lon());
+            rider.setOnlineStatus(row.online());
+            rider.setAcceptStatus(row.accept());
+            rider.setUpdateTime(now);
+            if (rider.getVersion() == null) {
+                rider.setVersion(1L);
+            }
+            riderRepo.save(rider);
+            n++;
+        }
+        log.info("演示骑手已补齐 {} 人（主账号仍为 13800000002）", n);
+    }
+
+    private record DemoRider(String phone, String name, double lat, double lon, String online, String accept) {
+    }
+
     private void seedRiderProfiles() {
         try (var c = dataSource.getConnection(); var s = c.createStatement()) {
             s.execute("""
@@ -614,7 +760,7 @@ public class SeedRunner implements ApplicationRunner {
             String[] gifts = {"WATER", "WATER", "MILKTEA", "MILKTEA", "GIFT", "CHICKEN"};
             try (var ps = c.prepareStatement("""
                     INSERT IGNORE INTO order_tip (order_id, rider_id, user_id, cents, gift_code, created_at)
-                    VALUES (?,?,?,?,?,NOW())
+                    VALUES (?,?,?,?,?,DATE_SUB(NOW(), INTERVAL ? DAY))
                     """)) {
                 int sum = 0;
                 for (int i = 0; i < cents.length; i++) {
@@ -624,16 +770,36 @@ public class SeedRunner implements ApplicationRunner {
                     ps.setLong(3, 1L);
                     ps.setInt(4, cents[i]);
                     ps.setString(5, gifts[i]);
+                    ps.setInt(6, i + 1);
                     ps.addBatch();
                     sum += cents[i];
                 }
                 ps.executeBatch();
+                try (var up = c.prepareStatement(
+                        "UPDATE order_tip SET created_at = DATE_SUB(NOW(), INTERVAL (order_id - 8000000000000001) DAY) WHERE rider_id=? AND order_id BETWEEN 8000000000000001 AND 8000000000000006")) {
+                    up.setLong(1, riderId);
+                    up.executeUpdate();
+                }
                 try (var up = c.prepareStatement(
                         "UPDATE rider_profile SET tip_cents_total = GREATEST(COALESCE(tip_cents_total,0), ?) WHERE user_id=?")) {
                     up.setInt(1, sum);
                     up.setLong(2, riderId);
                     up.executeUpdate();
                 }
+            }
+            try (var ps = c.prepareStatement("""
+                    INSERT INTO rider_workday (user_id, work_date, worked_seconds, forced_offline)
+                    VALUES (?, DATE_SUB(CURDATE(), INTERVAL ? DAY), ?, 0)
+                    ON DUPLICATE KEY UPDATE worked_seconds = IF(work_date = CURDATE(), worked_seconds,
+                      IF(worked_seconds > 0, worked_seconds, VALUES(worked_seconds)))
+                    """)) {
+                for (int d = 1; d <= 6; d++) {
+                    ps.setLong(1, riderId);
+                    ps.setInt(2, d);
+                    ps.setInt(3, 4 * 3600 + (d % 3) * 1800);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
             }
         } catch (Exception ex) {
             log.warn("骑手简介种子失败: {}", ex.getMessage());

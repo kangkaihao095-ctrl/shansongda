@@ -13,7 +13,7 @@ public final class CouponPolicy {
     }
 
     public static int discountCents(Coupon coupon, int goodsCents) {
-        Quote q = quote(coupon, goodsCents, null, Instant.now());
+        Quote q = quote(coupon, goodsCents, 0, null, Instant.now());
         if (!q.available()) {
             throw BizException.badRequest(q.reasonCode(), q.reason());
         }
@@ -21,6 +21,10 @@ public final class CouponPolicy {
     }
 
     public static Quote quote(Coupon coupon, int goodsCents, Long merchantId, Instant now) {
+        return quote(coupon, goodsCents, 0, merchantId, now);
+    }
+
+    public static Quote quote(Coupon coupon, int goodsCents, int freightCents, Long merchantId, Instant now) {
         if (coupon == null) {
             return Quote.no("COUPON_MISSING", "券不存在");
         }
@@ -38,14 +42,22 @@ public final class CouponPolicy {
         if (goodsCents < min) {
             return Quote.no("COUPON_MIN", "未满门槛");
         }
-        int discount;
+        if (coversFreight(coupon)) {
+            int freightOff = Math.min(nz(coupon.getDiscountCents()), Math.max(0, freightCents));
+            return new Quote(true, "OK", "可用", freightOff, 0, freightOff, true);
+        }
+        int goodsOff;
         if ("PERCENT".equals(coupon.getType())) {
             int percent = Math.min(100, Math.max(0, nz(coupon.getPercentOff())));
-            discount = goodsCents * percent / 100;
+            goodsOff = goodsCents * percent / 100;
         } else {
-            discount = Math.min(nz(coupon.getDiscountCents()), Math.max(0, goodsCents));
+            goodsOff = Math.min(nz(coupon.getDiscountCents()), Math.max(0, goodsCents));
         }
-        return new Quote(true, "OK", "可用", discount);
+        return new Quote(true, "OK", "可用", goodsOff, goodsOff, 0, false);
+    }
+
+    public static boolean coversFreight(Coupon coupon) {
+        return coupon != null && "FREIGHT".equalsIgnoreCase(coupon.getType());
     }
 
     /**
@@ -68,9 +80,14 @@ public final class CouponPolicy {
         return value == null ? 0 : value;
     }
 
-    public record Quote(boolean available, String reasonCode, String reason, int discountCents) {
+    public record Quote(boolean available, String reasonCode, String reason, int discountCents,
+                        int goodsDiscountCents, int freightDiscountCents, boolean coversFreight) {
+        public Quote(boolean available, String reasonCode, String reason, int discountCents) {
+            this(available, reasonCode, reason, discountCents, discountCents, 0, false);
+        }
+
         public static Quote no(String code, String reason) {
-            return new Quote(false, code, reason, 0);
+            return new Quote(false, code, reason, 0, 0, 0, false);
         }
     }
 

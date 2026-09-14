@@ -52,6 +52,15 @@ public class RiderProfileService {
         return card(auth.userId());
     }
 
+    public Map<String, Object> credit(long riderId) {
+        RiderProfile profile = profileRepo.findById(riderId).orElse(null);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("onTimeRate", profile == null || profile.getOnTimeRate() == null ? 0.92 : profile.getOnTimeRate());
+        body.put("ratingAvg", profile == null || profile.getRatingAvg() == null ? 4.8 : profile.getRatingAvg());
+        body.put("ratingCount", profile == null ? 0 : nz(profile.getRatingCount()));
+        return body;
+    }
+
     public Map<String, Object> card(long riderId) {
         riderRepo.findById(riderId).orElseThrow(() -> BizException.notFound("骑手不存在"));
         RiderProfile profile = ensure(riderId);

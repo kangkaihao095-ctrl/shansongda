@@ -55,6 +55,8 @@ describe('LoginView', () => {
     const inputs = wrapper.findAll('input')
     expect((inputs[0].element as HTMLInputElement).value).toBe('13800000001')
     expect((inputs[1].element as HTMLInputElement).value).toBe('demo123456')
+    expect((inputs[1].element as HTMLInputElement).type).toBe('password')
+    expect(wrapper.find('.login-eye').exists()).toBe(true)
   })
 
   it('switching role only prefills and does not auto login', async () => {
@@ -70,5 +72,22 @@ describe('LoginView', () => {
     await flushPromises()
     expect(login).toHaveBeenCalledTimes(1)
     expect(login).toHaveBeenCalledWith('13800000002', 'demo123456')
+  })
+
+  it('toggles to register form and submits role', async () => {
+    register.mockResolvedValue({ role: 'USER' })
+    const wrapper = await mountLogin()
+    const modes = wrapper.findAll('.login-mode button')
+    await modes[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('注册并进入')
+    const inputs = wrapper.findAll('input')
+    expect((inputs[0].element as HTMLInputElement).value).toBe('')
+    await inputs[0].setValue('13900001111')
+    await inputs[1].setValue('demo123456')
+    await wrapper.find('.btn').trigger('click')
+    await flushPromises()
+    expect(register).toHaveBeenCalledWith('13900001111', 'demo123456', 'USER', '')
+    expect(login).not.toHaveBeenCalled()
   })
 })

@@ -49,6 +49,12 @@ public final class MerchantReport {
         sb.append(title).append("共 ").append(orders).append(" 单，成交 ")
                 .append(yuan(gmv)).append("，完成 ").append(completed)
                 .append(" 单，退款 ").append(yuan(refund)).append("。");
+        if (orders > 0) {
+            sb.append("客单价 ").append(yuan(Math.round((double) gmv / orders))).append("。");
+        }
+        if (gmv > 0) {
+            sb.append("退款率 ").append(String.format("%.1f", refund * 100.0 / gmv)).append("%。");
+        }
         if (top == null || top.isEmpty()) {
             sb.append("暂无热销商品。");
         } else {
@@ -143,6 +149,10 @@ public final class MerchantReport {
             return row;
         }).toList());
         body.put("summary", summary(stats, top));
+        long aov = orders <= 0 ? 0 : Math.round((double) gmv / orders);
+        double refundRate = gmv <= 0 ? 0 : (refund * 1.0 / gmv);
+        body.put("avgPayCents", aov);
+        body.put("refundRate", Math.round(refundRate * 10000) / 10000.0);
         return body;
     }
 

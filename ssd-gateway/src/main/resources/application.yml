@@ -4,6 +4,10 @@ server:
 ssd:
   jwt:
     secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  internal:
+    token: ${SSD_INTERNAL_TOKEN:ssd-internal-local}
+  search:
+    uri: ${SSD_SEARCH_URI:}
 
 spring:
   application:
@@ -23,7 +27,7 @@ spring:
         - id: auth-account
           uri: http://127.0.0.1:18081
           predicates:
-            - Path=/api/auth/**, /api/me, /api/me/**, /api/avatars/**, /api/review-photos, /api/review-photos/**, /api/map/**, /api/riders/me/**, /api/riders/*/profile, /api/merchants/**, /api/coupons/**, /api/reviews/**, /api/member, /api/member/**
+            - Path=/api/auth/**, /api/me, /api/me/**, /api/avatars/**, /api/shop-covers/**, /api/review-photos, /api/review-photos/**, /api/map/**, /api/riders/me/**, /api/riders/*/profile, /api/merchants/**, /api/coupons/**, /api/reviews/**, /api/member, /api/member/**
         - id: merchant-stats
           uri: http://127.0.0.1:18083
           predicates:
@@ -40,6 +44,12 @@ spring:
           uri: http://127.0.0.1:18081
           predicates:
             - Path=/api/riders/nearby
+        - id: order-sse
+          uri: http://127.0.0.1:18083
+          predicates:
+            - Path=/api/orders/stream-active
+          metadata:
+            response-timeout: 130s
         - id: order
           uri: http://127.0.0.1:18083
           predicates:

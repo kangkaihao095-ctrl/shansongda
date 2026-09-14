@@ -31,6 +31,15 @@ public interface AccountClient {
             @RequestParam(value = "onlineStatus", required = false) String onlineStatus,
             @RequestParam(value = "acceptStatus", required = false) String acceptStatus);
 
+    @GetMapping("/internal/riders/locations")
+    ApiResult<List<Map<String, Object>>> riderLocations(@RequestParam("withinSeconds") int withinSeconds);
+
+    @GetMapping("/internal/riders/{id}/can-accept")
+    ApiResult<Map<String, Object>> canAccept(@PathVariable("id") long id);
+
+    @GetMapping("/internal/members/{userId}")
+    ApiResult<Map<String, Object>> member(@PathVariable("userId") long userId);
+
     @GetMapping("/internal/riders/{id}/profile")
     ApiResult<Map<String, Object>> riderProfile(@PathVariable("id") long id);
 

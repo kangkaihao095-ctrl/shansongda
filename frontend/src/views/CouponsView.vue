@@ -95,17 +95,17 @@ onMounted(load)
   <div class="phone page">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router)">← 返回</button>
-      <b>我的优惠券</b>
+      <b class="page-title" style="font-size:18px">我的优惠券</b>
     </header>
     <div class="phone-body pad">
-      <h3 v-if="loginGiftEligible(loginGift)">登录礼</h3>
+      <h3 v-if="loginGiftEligible(loginGift)" class="section-title">登录礼</h3>
       <article v-if="loginGiftEligible(loginGift)" class="card" style="margin-bottom:12px" @click="claimLogin()">
         <div class="coupon-spread packed">
           <CouponFace v-for="it in loginGift.items" :key="it.code" :coupon="it" compact mode="cover" />
         </div>
         <button class="btn" style="width:100%;margin-top:10px" type="button" @click.stop="claimLogin">领取登录礼</button>
       </article>
-      <h3>今日可领</h3>
+      <h3 class="section-title">今日可领</h3>
       <article class="card" style="margin-bottom:12px" @click="!today.claimed && today.items?.length && claimToday()">
         <div v-if="today.items?.length" class="coupon-spread packed">
           <CouponFace v-for="it in today.items" :key="it.code" :coupon="it" compact mode="cover" />
@@ -115,7 +115,7 @@ onMounted(load)
           {{ today.claimed ? '今日已领' : '领取' }}
         </button>
       </article>
-      <h3>可领</h3>
+      <h3 class="section-title">可领</h3>
       <div v-for="c in list" :key="c.id" class="coupon-row" @click="claimCatalog(c)">
         <CouponFace :coupon="c" compact mode="cover" />
         <button class="btn" :disabled="c.claimed" type="button">{{ c.claimed ? '已领取' : '领取' }}</button>

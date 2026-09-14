@@ -3,8 +3,10 @@ import {
   couponAmount,
   couponFaceLabel,
   couponNo,
+  couponRules,
   couponThreshold,
   couponTone,
+  freightCoverText,
   LOGIN_GIFT_SHOWN_KEY,
   loginGiftEligible,
   loginGiftStorageKey,
@@ -24,6 +26,13 @@ describe('coupon helpers', () => {
     expect(couponTone({ memberOnly: true })).toBe('gold')
     expect(couponTone({ icon: 'minus' })).toBe('red')
     expect(couponNo({ couponId: 9, code: 'X' })).toBe(9)
+  })
+
+  it('says coupons do not cover freight', () => {
+    expect(freightCoverText({ coversFreight: false })).toBe('本券不抵扣运费（只抵商品）')
+    expect(freightCoverText({ coversFreight: true })).toBe('本券可抵运费')
+    expect(couponRules({ type: 'AMOUNT', minSpendCents: 0, coversFreight: false }).join('')).toContain('不抵扣运费')
+    expect(couponRules({ type: 'FREIGHT', coversFreight: true }).join('')).toContain('可抵配送费')
   })
 
   it('builds login gift storage key', () => {

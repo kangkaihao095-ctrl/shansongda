@@ -57,6 +57,9 @@ public final class CouponIcons {
         if ("PERCENT".equals(type)) {
             return PERCENT;
         }
+        if ("FREIGHT".equals(type)) {
+            return FREE;
+        }
         if (isCategory(code)) {
             return CATEGORY;
         }

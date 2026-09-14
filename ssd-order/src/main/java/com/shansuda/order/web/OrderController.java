@@ -11,6 +11,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import com.shansuda.common.auth.AuthHolder;
+import com.shansuda.common.auth.AuthUser;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -32,7 +36,41 @@ public class OrderController {
 
     @PostMapping("/api/orders")
     public ApiResult<Map<String, Object>> create(@RequestBody CreateRequest req) {
-        return ApiResult.ok(orderService.create(req.merchantId(), req.addressId(), req.itemMaps(), req.couponId(), req.clientPayCents()));
+        return ApiResult.ok(orderService.create(req.merchantId(), req.addressId(), req.itemMaps(), req.couponId(), req.clientPayCents(), req.expectDeliverAt()));
+    }
+
+    @GetMapping("/api/orders/active-delivery")
+    public ApiResult<Map<String, Object>> activeDelivery() {
+        return ApiResult.ok(orderService.activeDelivery());
+    }
+
+    @GetMapping(value = "/api/orders/stream-active", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamActive(jakarta.servlet.http.HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("X-Accel-Buffering", "no");
+        AuthUser auth = AuthHolder.require();
+        SseEmitter emitter = new SseEmitter(120_000L);
+        if (!auth.isUser()) {
+            emitter.complete();
+            return emitter;
+        }
+        Thread worker = new Thread(() -> {
+            AuthHolder.set(auth);
+            try {
+                for (int i = 0; i < 40; i++) {
+                    emitter.send(SseEmitter.event().name("delivery").data(orderService.activeDelivery()));
+                    Thread.sleep(3000);
+                }
+                emitter.complete();
+            } catch (Exception ex) {
+                emitter.completeWithError(ex);
+            } finally {
+                AuthHolder.clear();
+            }
+        }, "ssd-sse-active");
+        worker.setDaemon(true);
+        worker.start();
+        return emitter;
     }
 
     @PostMapping("/api/orders/{id}/mock-pay")
@@ -56,7 +94,7 @@ public class OrderController {
         return ApiResult.ok(orderService.list(cursor, size, status, page, q, scene));
     }
 
-    @GetMapping("/api/orders/{id}")
+    @GetMapping("/api/orders/{id:\\d+}")
     public ApiResult<Map<String, Object>> get(@PathVariable long id) {
         return ApiResult.ok(orderService.get(id));
     }
@@ -129,6 +167,12 @@ public class OrderController {
         return ApiResult.ok(orderService.track(id));
     }
 
+    @PostMapping("/api/orders/{id}/rider-issue")
+    public ApiResult<Map<String, Object>> riderIssue(@PathVariable long id, @RequestBody(required = false) IssueRequest req) {
+        IssueRequest body = req == null ? new IssueRequest(null, null) : req;
+        return ApiResult.ok(orderService.riderIssue(id, body.code(), body.text()));
+    }
+
     @GetMapping("/api/merchant/stats")
     public ApiResult<Map<String, Object>> merchantStats(
             @RequestParam(required = false) String range,
@@ -151,7 +195,8 @@ public class OrderController {
         return ApiResult.ok(orderService.riderEarnings());
     }
 
-    public record CreateRequest(long merchantId, long addressId, List<Item> items, Long couponId, Integer clientPayCents) {
+    public record CreateRequest(long merchantId, long addressId, List<Item> items, Long couponId, Integer clientPayCents,
+                                String expectDeliverAt) {
         public record Item(long skuId, int qty, Integer priceCents) {
         }
 
@@ -181,5 +226,8 @@ public class OrderController {
     }
 
     public record TipRequest(String giftCode) {
+    }
+
+    public record IssueRequest(String code, String text) {
     }
 }

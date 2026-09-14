@@ -155,40 +155,28 @@ function stockText(sku) {
   <div class="phone page">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router, '/home')">← 返回</button>
-      <b>限时秒杀</b>
+      <b class="page-title" style="font-size:18px">限时秒杀</b>
     </header>
     <div class="phone-body no-tab pad" v-if="activity && current">
-      <img
-        :src="imgSrc(current.imageUrl, 'fresh', 'act-' + current.skuId, 'dish')"
-        alt=""
-        data-category="fresh"
-        :data-seed="'act-' + current.skuId"
-        @error="onImgError"
-        style="width:100%;height:160px;object-fit:cover;border-radius:18px"
-      />
-      <h2>{{ current.name }}</h2>
-      <div class="pill">距结束 {{ endLeft }}</div>
-      <div class="muted" style="margin-top:8px">下一档还剩 {{ rotateLeft }} · 按档期轮换，抢完不换品</div>
-      <p v-if="waiting" class="muted">订单由活动消息落地，正在等待…</p>
-      <article class="card" style="margin-top:14px">
-        <div class="row">
-          <img
-            :src="imgSrc(current.imageUrl, 'fresh', 'act-sku-' + current.skuId, 'dish')"
-            alt=""
-            data-category="fresh"
-            :data-seed="'act-sku-' + current.skuId"
-            @error="onImgError"
-            style="width:72px;height:72px;border-radius:14px;object-fit:cover"
-          />
-          <div style="flex:1">
-            <b>{{ current.name }}</b>
-            <div class="muted">{{ stockText(current) }}</div>
-            <div class="row">
-              <b>{{ yuan(current.priceCents) }}</b>
-              <span class="muted" style="text-decoration:line-through">{{ yuan(current.originPriceCents) }}</span>
-            </div>
-          </div>
+      <div class="act-hero">
+        <img
+          :src="imgSrc(current.imageUrl, 'fresh', 'act-' + current.skuId, 'dish')"
+          alt=""
+          data-category="fresh"
+          :data-seed="'act-' + current.skuId"
+          @error="onImgError"
+        />
+      </div>
+      <div class="card" style="margin-top:12px">
+        <span class="pill">距结束 {{ endLeft }}</span>
+        <h2 style="margin:8px 0 4px;font-size:20px">{{ current.name }}</h2>
+        <div class="muted">下一档还剩 {{ rotateLeft }} · 按档期轮换，抢完不换品</div>
+        <div class="act-price">
+          <b>{{ yuan(current.priceCents) }}</b>
+          <span class="muted" style="text-decoration:line-through">{{ yuan(current.originPriceCents) }}</span>
+          <span class="muted">{{ stockText(current) }}</span>
         </div>
+        <p v-if="waiting" class="muted">订单由活动消息落地，正在等待…</p>
         <button
           class="btn"
           style="width:100%;margin-top:12px"
@@ -197,7 +185,7 @@ function stockText(sku) {
         >
           {{ btnLabel }}
         </button>
-      </article>
+      </div>
     </div>
     <p v-else class="pad muted">活动加载中…</p>
   </div>

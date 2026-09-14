@@ -76,6 +76,7 @@ describe('labels', () => {
     expect(orderStatusHeadline('PAID', 0, 'USER')).toBe('商家已接单·备餐中')
     expect(orderStatusHeadline('PAID', 0, 'RIDER')).toBe('待骑手接单')
     expect(orderStatusHeadline('PAID', 0, 'MERCHANT')).toBe('待骑手接单')
+    expect(orderStatusHeadline('PAID', 0, 'USER')).toBe('商家已接单·备餐中')
   })
 
   it('keeps four tip gifts and no custom amount', () => {

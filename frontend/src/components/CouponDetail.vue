@@ -13,6 +13,7 @@ const emit = defineEmits(['close'])
     <div v-if="open && coupon" class="coupon-mask" @click.self="emit('close')">
       <div class="coupon-sheet" @click.stop>
         <button class="coupon-x" type="button" @click="emit('close')">×</button>
+        <div class="sheet-handle"></div>
         <div class="coupon-sheet-title">优惠券详情</div>
         <article class="coupon-face" :class="couponTone(coupon)" style="margin:8px 0 14px">
           <div class="coupon-face-inner">
@@ -28,6 +29,7 @@ const emit = defineEmits(['close'])
           <div class="coupon-rule">
             <div v-if="expireText(coupon.endAt)">{{ expireText(coupon.endAt) }}</div>
             <div v-if="couponNo(coupon)">券号 {{ couponNo(coupon) }}</div>
+            <div class="coupon-freight">{{ coupon.coversFreight === true ? '可抵运费' : '不抵扣运费（只抵商品）' }}</div>
             <div v-for="line in couponRules(coupon)" :key="line">{{ line }}</div>
           </div>
         </div>

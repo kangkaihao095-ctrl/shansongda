@@ -84,6 +84,10 @@ public final class OsmGraphLoader {
                             current.highway = v;
                         } else if ("oneway".equals(k)) {
                             current.oneway = v;
+                        } else if ("name".equals(k) || "name:zh".equals(k) || "name:zh-Hans".equals(k)) {
+                            if (current.name == null || current.name.isBlank() || "name".equals(k)) {
+                                current.name = v;
+                            }
                         }
                     }
                 } else if (event == XMLStreamConstants.END_ELEMENT && "way".equals(reader.getLocalName())) {
@@ -130,12 +134,14 @@ public final class OsmGraphLoader {
                 double km = GridPathFinder.haversineKm(na.lat, na.lon, nb.lat, nb.lon);
                 double base = Math.max(0.12, km * 2.2);
                 // DEV_TASK：ROAD 双向各一条；骑手可逆行，忽略 OSM oneway 以免图不连通
+                String roadName = way.name == null ? "" : way.name;
+                String highway = way.highway == null ? "" : way.highway;
                 if (seen.add(a + ">" + b)) {
-                    graph.addEdge(a, new GridPathFinder.Edge(b, base, 1.0, "osm-" + way.id + "-" + i + "a"));
+                    graph.addEdge(a, new GridPathFinder.Edge(b, base, 1.0, "osm-" + way.id + "-" + i + "a", roadName, highway));
                     road++;
                 }
                 if (seen.add(b + ">" + a)) {
-                    graph.addEdge(b, new GridPathFinder.Edge(a, base, 1.0, "osm-" + way.id + "-" + i + "b"));
+                    graph.addEdge(b, new GridPathFinder.Edge(a, base, 1.0, "osm-" + way.id + "-" + i + "b", roadName, highway));
                     road++;
                 }
             }
@@ -203,7 +209,7 @@ public final class OsmGraphLoader {
                 if (b == null || !seenEdge.add(a + ">" + b)) {
                     continue;
                 }
-                graph.addEdge(a, new GridPathFinder.Edge(b, e.baseTime, e.congestion, e.roadId));
+                graph.addEdge(a, new GridPathFinder.Edge(b, e.baseTime, e.congestion, e.roadId, e.name, e.highway));
             }
         });
         log.info("路网连通片：保留 {} / {} 节点", graph.nodes().size(), raw.nodes().size());
@@ -229,10 +235,10 @@ public final class OsmGraphLoader {
             for (int x = 0; x < cols; x++) {
                 int id = y * cols + x;
                 if (x + 1 < cols) {
-                    link(graph, id, id + 1, road++);
+                    link(graph, id, id + 1, road++, cols);
                 }
                 if (y + 1 < rows) {
-                    link(graph, id, id + cols, road++);
+                    link(graph, id, id + cols, road++, cols);
                 }
             }
         }
@@ -240,13 +246,42 @@ public final class OsmGraphLoader {
         return graph;
     }
 
-    private static void link(GridPathFinder graph, int a, int b, int road) {
+    private static void link(GridPathFinder graph, int a, int b, int road, int cols) {
         GridPathFinder.Node na = graph.node(a);
         GridPathFinder.Node nb = graph.node(b);
         double km = GridPathFinder.haversineKm(na.lat, na.lon, nb.lat, nb.lon);
         double base = Math.max(0.2, km * 2.0);
-        graph.addEdge(a, new GridPathFinder.Edge(b, base, 1.0, "fb-" + road + "a"));
-        graph.addEdge(b, new GridPathFinder.Edge(a, base, 1.0, "fb-" + road + "b"));
+        int ay = a / cols;
+        int ax = a % cols;
+        int by = b / cols;
+        String highway;
+        String name;
+        if (ay == by) {
+            if (ay == 0) {
+                highway = "primary";
+                name = "南京东路";
+            } else if (ay == 2) {
+                highway = "secondary";
+                name = "人民大道";
+            } else if (ay == 3) {
+                highway = "primary";
+                name = "延安东路";
+            } else {
+                highway = "residential";
+                name = "";
+            }
+        } else if (ax == cols - 1) {
+            highway = "primary";
+            name = "中山东一路";
+        } else if (ax == 1) {
+            highway = "primary";
+            name = "西藏中路";
+        } else {
+            highway = "tertiary";
+            name = "";
+        }
+        graph.addEdge(a, new GridPathFinder.Edge(b, base, 1.0, "fb-" + road + "a", name, highway));
+        graph.addEdge(b, new GridPathFinder.Edge(a, base, 1.0, "fb-" + road + "b", name, highway));
     }
 
     private static final class OsmWay {
@@ -254,6 +289,7 @@ public final class OsmGraphLoader {
         final List<Long> nds = new ArrayList<>();
         String highway;
         String oneway;
+        String name;
 
         OsmWay(long id) {
             this.id = id;

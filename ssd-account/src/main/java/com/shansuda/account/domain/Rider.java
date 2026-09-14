@@ -23,6 +23,10 @@ public class Rider {
     @Column(name = "update_time")
     private Instant updateTime;
     private Long version;
+    @Column(name = "auto_report")
+    private Boolean autoReport;
+    @Column(name = "auto_report_interval_sec")
+    private Integer autoReportIntervalSec;
 
     public Long getUserId() { return userId; }
     public void setUserId(Long userId) { this.userId = userId; }
@@ -38,4 +42,13 @@ public class Rider {
     public void setUpdateTime(Instant updateTime) { this.updateTime = updateTime; }
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }
+    public Boolean getAutoReport() { return Boolean.TRUE.equals(autoReport); }
+    public void setAutoReport(Boolean autoReport) { this.autoReport = Boolean.TRUE.equals(autoReport); }
+    public Integer getAutoReportIntervalSec() {
+        int n = autoReportIntervalSec == null ? 5 : autoReportIntervalSec;
+        return Math.min(30, Math.max(3, n));
+    }
+    public void setAutoReportIntervalSec(Integer autoReportIntervalSec) {
+        this.autoReportIntervalSec = autoReportIntervalSec;
+    }
 }

@@ -2,7 +2,7 @@ package com.shansuda.dispatch.osm;
 
 import com.shansuda.common.route.GridPathFinder;
 import com.shansuda.common.route.OsmGraphLoader;
-import com.shansuda.dispatch.neo4j.Neo4jRoadStore;
+import com.shansuda.common.route.Neo4jRoadStore;
 
 /**
  * 独立导入：docker compose up -d neo4j 后执行

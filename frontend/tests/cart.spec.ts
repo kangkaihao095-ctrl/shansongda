@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addSku, cart, clearCart, goodsCents, setShop } from '../src/cart.js'
+import { addSku, cart, clearCart, fillFromSnapshot, goodsCents, setShop } from '../src/cart.js'
 
 describe('cart', () => {
   it('adds the same sku as quantity', () => {
@@ -27,5 +27,13 @@ describe('cart', () => {
     expect(saved.items[0].qty).toBe(1)
     clearCart()
     expect(JSON.parse(localStorage.getItem('ssd.cart') || 'null').items).toEqual([])
+  })
+
+  it('fills cart from order sku snapshot', () => {
+    fillFromSnapshot(3, '鲜生', '/c.jpg', [{ skuId: 9, name: '拼盘', qty: 2, priceCents: 1990 }])
+    expect(cart.merchantId).toBe(3)
+    expect(cart.items).toHaveLength(1)
+    expect(cart.items[0].qty).toBe(2)
+    expect(goodsCents()).toBe(3980)
   })
 })

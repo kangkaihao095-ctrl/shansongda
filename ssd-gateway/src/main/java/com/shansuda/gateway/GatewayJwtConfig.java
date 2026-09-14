@@ -28,7 +28,7 @@ public class GatewayJwtConfig {
 
     @Bean
     public JwtService jwtService(
-            @Value("${ssd.jwt.secret:change-me-in-prod-please-32chars}") String secret,
+            @Value("${ssd.jwt.secret:${SSD_JWT_SECRET:change-me-in-prod-please-32chars}}") String secret,
             @Value("${ssd.jwt.ttl-seconds:86400}") long ttlSeconds) {
         return new JwtService(secret, ttlSeconds);
     }
@@ -53,6 +53,7 @@ public class GatewayJwtConfig {
             }
             String path = exchange.getRequest().getURI().getPath();
             if (path.startsWith("/api/auth/") || path.startsWith("/api/avatars")
+                    || path.startsWith("/api/shop-covers")
                     || (path.startsWith("/api/review-photos") && exchange.getRequest().getMethod() == HttpMethod.GET)
                     || path.startsWith("/api/map/") || path.startsWith("/actuator")) {
                 return chain.filter(exchange);

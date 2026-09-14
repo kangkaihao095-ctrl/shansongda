@@ -31,6 +31,8 @@ CREATE TABLE rider (
   lon DOUBLE NOT NULL,
   update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   version BIGINT NOT NULL DEFAULT 1,
+  auto_report TINYINT(1) NOT NULL DEFAULT 0,
+  auto_report_interval_sec INT NOT NULL DEFAULT 5,
   CONSTRAINT fk_rider_user FOREIGN KEY (user_id) REFERENCES app_user (id)
 );
 
@@ -41,6 +43,8 @@ CREATE TABLE merchant (
   lon DOUBLE NOT NULL,
   address VARCHAR(255) NOT NULL,
   online_status VARCHAR(20) NOT NULL DEFAULT 'ONLINE',
+  intro VARCHAR(512) NULL,
+  phone VARCHAR(32) NULL,
   CONSTRAINT fk_merchant_user FOREIGN KEY (user_id) REFERENCES app_user (id)
 );
 
@@ -130,6 +134,14 @@ CREATE TABLE coupon_grant (
 CREATE TABLE seckill_idem (
   idem_key VARCHAR(128) PRIMARY KEY,
   order_id BIGINT NULL,
+  payload JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE coupon_idem (
+  idem_key VARCHAR(128) PRIMARY KEY,
+  activity_id BIGINT NULL,
+  user_id BIGINT NULL,
   payload JSON NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

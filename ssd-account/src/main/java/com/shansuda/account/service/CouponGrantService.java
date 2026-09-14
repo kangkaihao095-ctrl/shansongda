@@ -270,6 +270,10 @@ public class CouponGrantService {
     }
 
     public List<Map<String, Object>> options(long userId, long merchantId, int goodsCents) {
+        return options(userId, merchantId, goodsCents, 0);
+    }
+
+    public List<Map<String, Object>> options(long userId, long merchantId, int goodsCents, int freightCents) {
         Instant now = Instant.now();
         List<Map<String, Object>> out = new ArrayList<>();
         for (UserCoupon grant : userCouponRepo.findByUserIdAndStatus(userId, "UNUSED")) {
@@ -277,12 +281,16 @@ public class CouponGrantService {
             if (coupon == null) {
                 continue;
             }
-            CouponPolicy.Quote q = CouponPolicy.quote(coupon, goodsCents, merchantId, now);
+            CouponPolicy.Quote q = CouponPolicy.quote(coupon, goodsCents, freightCents, merchantId, now);
             Map<String, Object> row = couponBrief(coupon, grant.getStatus());
             row.put("grantId", grant.getId());
             row.put("available", q.available());
             row.put("reason", q.available() ? null : q.reason());
             row.put("discountCents", q.discountCents());
+            row.put("goodsDiscountCents", q.goodsDiscountCents());
+            row.put("freightDiscountCents", q.freightDiscountCents());
+            row.put("coversFreight", q.coversFreight());
+            row.put("coversFreightNote", q.coversFreight() ? "本券可抵运费" : "券只抵商品、不抵运费");
             row.put("endAt", coupon.getEndAt());
             out.add(row);
         }
@@ -448,6 +456,8 @@ public class CouponGrantService {
         body.put("icon", icon);
         body.put("iconUrl", CouponIcons.url(icon));
         body.put("scene", CouponIcons.sceneOf(coupon.getCode()));
+        body.put("coversFreight", CouponPolicy.coversFreight(coupon));
+        body.put("coversFreightNote", CouponPolicy.coversFreight(coupon) ? "本券可抵运费" : "券只抵商品、不抵运费");
         return body;
     }
 

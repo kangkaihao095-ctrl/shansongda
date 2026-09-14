@@ -5,12 +5,16 @@ ssd:
   mode: ${SSD_MODE:auto}
   jwt:
     secret: ${SSD_JWT_SECRET:change-me-in-prod-please-32chars}
+  internal:
+    token: ${SSD_INTERNAL_TOKEN:ssd-internal-local}
   neo4j:
     uri: bolt://127.0.0.1:7687
     username: neo4j
     password: shansuda
   dispatch:
     congestion-ms: 60000
+  amap:
+    key: ${SSD_AMAP_KEY:}
   client:
     order: http://127.0.0.1:18083
     activity: http://127.0.0.1:18082

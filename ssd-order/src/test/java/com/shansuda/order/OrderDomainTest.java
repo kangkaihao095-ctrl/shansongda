@@ -34,6 +34,10 @@ class OrderDomainTest {
         assertEquals("REFUNDING", OrderStateMachine.applyRefund("PAID"));
         assertEquals("REFUNDED", OrderStateMachine.approveRefund("REFUNDING"));
         assertEquals("REFUND_REJECTED", OrderStateMachine.rejectRefund("REFUNDING"));
+        assertEquals("PAID", OrderStateMachine.resumeAfterReject("REFUND_REJECTED", "PAID"));
+        assertEquals("ACCEPTED", OrderStateMachine.resumeAfterReject("REFUND_REJECTED", "ACCEPTED"));
+        assertEquals("PAID", OrderStateMachine.resumeAfterReject("REFUND_REJECTED", null));
+        assertThrows(BizException.class, () -> OrderStateMachine.resumeAfterReject("REFUNDING", "PAID"));
         assertEquals("REFUNDED", OrderStateMachine.approveRefund(OrderStateMachine.applyRefund("MERCHANT_PENDING")));
         assertThrows(BizException.class, () -> OrderStateMachine.applyRefund("CREATED"));
         assertThrows(BizException.class, () -> OrderStateMachine.cancel("PAID"));

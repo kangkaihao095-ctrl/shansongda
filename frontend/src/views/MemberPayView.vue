@@ -54,12 +54,12 @@ async function pay() {
   <div class="phone page">
     <header class="frost pad row">
       <button class="back-btn" type="button" @click="goBack(router, '/me')">← 返回</button>
-      <b>开通闪会员</b>
+      <b class="page-title" style="font-size:18px">开通闪会员</b>
     </header>
     <div class="phone-body no-tab pad">
-      <div class="card" style="text-align:center;margin-bottom:14px">
+      <div class="card pay-hero">
         <div class="muted">应付金额</div>
-        <div class="num" style="font-size:36px;font-weight:800">{{ yuan(current.cents) }}</div>
+        <div class="num">{{ yuan(current.cents) }}</div>
         <div class="muted">{{ current.name }} {{ current.days }} 天</div>
       </div>
       <div class="plan-grid">

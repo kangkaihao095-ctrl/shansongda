@@ -7,9 +7,13 @@ import com.shansuda.activity.client.AccountClient;
 import com.shansuda.activity.client.OrderClient;
 import com.shansuda.activity.domain.Activity;
 import com.shansuda.activity.domain.ActivitySku;
+import com.shansuda.activity.domain.CouponGrant;
+import com.shansuda.activity.domain.CouponIdem;
 import com.shansuda.activity.domain.SeckillIdem;
 import com.shansuda.activity.repo.ActivityRepo;
 import com.shansuda.activity.repo.ActivitySkuRepo;
+import com.shansuda.activity.repo.CouponGrantRepo;
+import com.shansuda.activity.repo.CouponIdemRepo;
 import com.shansuda.activity.repo.SeckillIdemRepo;
 import com.shansuda.common.api.ApiResult;
 import com.shansuda.common.api.BizException;
@@ -20,8 +24,9 @@ import com.shansuda.common.mq.CouponSuccessMessage;
 import com.shansuda.common.mq.GrabSuccessMessage;
 import com.shansuda.common.mq.MqNames;
 import com.shansuda.common.mq.SeckillSuccessMessage;
-import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,9 +43,13 @@ import java.util.UUID;
 @Service
 public class ActivityService {
 
+    private static final Logger log = LoggerFactory.getLogger(ActivityService.class);
+
     private final ActivityRepo activityRepo;
     private final ActivitySkuRepo skuRepo;
     private final SeckillIdemRepo seckillIdemRepo;
+    private final CouponIdemRepo couponIdemRepo;
+    private final CouponGrantRepo couponGrantRepo;
     private final Cache<String, Object> localCache;
     private final AtomicStock atomicStock;
     private final RabbitTemplate rabbitTemplate;
@@ -50,17 +59,22 @@ public class ActivityService {
     private final ObjectProvider<AccountClient> accountClient;
     private final long seckillMerchantId;
     private final int rotateMinutes;
+    private final String mode;
 
     public ActivityService(ActivityRepo activityRepo, ActivitySkuRepo skuRepo, SeckillIdemRepo seckillIdemRepo,
+                           CouponIdemRepo couponIdemRepo, CouponGrantRepo couponGrantRepo,
                            Cache<String, Object> localCache,
                            AtomicStock atomicStock, RabbitTemplate rabbitTemplate, ObjectMapper objectMapper,
                            ObjectProvider<RedissonClient> redisson, ObjectProvider<OrderClient> orderClient,
                            ObjectProvider<AccountClient> accountClient,
                            @Value("${ssd.seckill.merchant-id:3}") long seckillMerchantId,
-                           @Value("${ssd.seckill.rotate-minutes:10}") int rotateMinutes) {
+                           @Value("${ssd.seckill.rotate-minutes:10}") int rotateMinutes,
+                           @Value("${ssd.mode:auto}") String mode) {
         this.activityRepo = activityRepo;
         this.skuRepo = skuRepo;
         this.seckillIdemRepo = seckillIdemRepo;
+        this.couponIdemRepo = couponIdemRepo;
+        this.couponGrantRepo = couponGrantRepo;
         this.localCache = localCache;
         this.atomicStock = atomicStock;
         this.rabbitTemplate = rabbitTemplate;
@@ -70,6 +84,7 @@ public class ActivityService {
         this.accountClient = accountClient;
         this.seckillMerchantId = seckillMerchantId;
         this.rotateMinutes = Math.max(1, rotateMinutes);
+        this.mode = mode;
     }
 
     public List<Map<String, Object>> list() {
@@ -81,6 +96,7 @@ public class ActivityService {
     }
 
     public ApiResult<Map<String, Object>> grabCoupon(long activityId) {
+        CriticalSection.requireAvailable(redisson.getIfAvailable(), mode, log);
         AuthUser user = AuthHolder.require();
         Activity activity = cachedActivity(activityId);
         if (!"COUPON".equals(activity.getType())) {
@@ -89,6 +105,21 @@ public class ActivityService {
         ActivitySku sku = skuRepo.findByActivityId(activityId).stream().findFirst()
                 .orElseThrow(() -> BizException.notFound("活动无券"));
         String idemKey = ActivityKeys.coupon(activityId, user.userId());
+        CouponIdem stored = couponIdemRepo.findById(idemKey).orElse(null);
+        if (stored != null) {
+            return ApiResult.replay(readJson(stored.getPayload()));
+        }
+        CouponGrant granted = couponGrantRepo.findByActivityIdAndUserIdAndScene(activityId, user.userId(), "COUPON")
+                .orElse(null);
+        if (granted != null) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("idempotencyKey", idemKey);
+            body.put("activityId", activityId);
+            body.put("userId", user.userId());
+            body.put("scene", "COUPON");
+            body.put("couponCode", granted.getCouponCode());
+            return ApiResult.replay(body);
+        }
         String stockKey = stockKey(activityId, sku.getSkuId());
         atomicStock.initStock(stockKey, sku.getOriginStock());
         String couponCode = "CPN-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
@@ -98,15 +129,22 @@ public class ActivityService {
         if (result.empty()) {
             throw BizException.conflict(ErrorCodes.STOCK_EMPTY, "券已抢完");
         }
-        if (result.success()) {
-            withLock("lock:act:" + activityId + ":" + sku.getSkuId(), () ->
-                    rabbitTemplate.convertAndSend(MqNames.ACTIVITY_EXCHANGE, MqNames.COUPON_SUCCESS, msg));
+        if (result.replay()) {
+            ensureCouponIdem(idemKey, activityId, user.userId(), result.payload());
+            return ApiResult.replay(readJson(result.payload()));
         }
+        if (!tryInsertCouponIdem(idemKey, activityId, user.userId(), payload)) {
+            CouponIdem first = couponIdemRepo.findById(idemKey).orElse(null);
+            return ApiResult.replay(readJson(first != null ? first.getPayload() : payload));
+        }
+        withLock("lock:act:" + activityId + ":" + sku.getSkuId(), () ->
+                rabbitTemplate.convertAndSend(MqNames.ACTIVITY_EXCHANGE, MqNames.COUPON_SUCCESS, msg));
         Map<String, Object> body = readJson(result.payload());
-        return result.replay() ? ApiResult.replay(body) : ApiResult.ok(body);
+        return ApiResult.ok(body);
     }
 
     public ApiResult<Map<String, Object>> seckill(long activityId, long skuId) {
+        CriticalSection.requireAvailable(redisson.getIfAvailable(), mode, log);
         AuthUser user = AuthHolder.require();
         Activity activity = cachedActivity(activityId);
         if (!"SECKILL".equals(activity.getType())) {
@@ -199,6 +237,8 @@ public class ActivityService {
     }
 
     public ApiResult<Map<String, Object>> occupyGrab(long orderId, long riderId, Map<String, Object> orderOrNull) {
+        CriticalSection.requireAvailable(redisson.getIfAvailable(), mode, log);
+        assertRiderCanAccept(riderId);
         if (orderOrNull == null) {
             requirePaidOrder(orderId);
         }
@@ -222,6 +262,37 @@ public class ActivityService {
         }
         Map<String, Object> body = readJson(result.payload());
         return result.replay() ? ApiResult.replay(body) : ApiResult.ok(body);
+    }
+
+    private void assertRiderCanAccept(long riderId) {
+        AccountClient account = accountClient.getIfAvailable();
+        if (account == null) {
+            throw BizException.conflict("WORK_CHECK_FAILED", "工时校验不可用，拒绝抢单");
+        }
+        try {
+            ApiResult<Map<String, Object>> res = account.canAccept(riderId);
+            Map<String, Object> gate = res == null ? null : res.data();
+            if (gate != null && Boolean.FALSE.equals(gate.get("allowed"))) {
+                String reason = gate.get("reason") == null ? "今日工时已满或已强制下线，不可接单" : String.valueOf(gate.get("reason"));
+                String code = gateCode(gate.get("code"));
+                throw BizException.conflict(code, reason);
+            }
+        } catch (BizException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw BizException.conflict("WORK_CHECK_FAILED", "工时校验失败，拒绝抢单");
+        }
+    }
+
+    private static String gateCode(Object raw) {
+        if (raw == null) {
+            return ErrorCodes.WORK_LIMIT;
+        }
+        String code = String.valueOf(raw).trim();
+        if (code.isEmpty() || "null".equalsIgnoreCase(code)) {
+            return ErrorCodes.WORK_LIMIT;
+        }
+        return code;
     }
 
     public void warmStock() {
@@ -353,20 +424,29 @@ public class ActivityService {
     }
 
     private void withLock(String name, Runnable action) {
-        RedissonClient client = redisson.getIfAvailable();
-        if (client == null) {
-            action.run();
+        CriticalSection.run(redisson.getIfAvailable(), mode, name, action, log);
+    }
+
+    private boolean tryInsertCouponIdem(String idemKey, long activityId, long userId, String payload) {
+        CouponIdem row = new CouponIdem();
+        row.setIdemKey(idemKey);
+        row.setActivityId(activityId);
+        row.setUserId(userId);
+        row.setPayload(payload);
+        row.setCreatedAt(Instant.now());
+        try {
+            couponIdemRepo.saveAndFlush(row);
+            return true;
+        } catch (DataIntegrityViolationException ex) {
+            return false;
+        }
+    }
+
+    private void ensureCouponIdem(String idemKey, long activityId, long userId, String payload) {
+        if (couponIdemRepo.existsById(idemKey) || payload == null || payload.isBlank()) {
             return;
         }
-        RLock lock = client.getLock(name);
-        lock.lock();
-        try {
-            action.run();
-        } finally {
-            if (lock.isHeldByCurrentThread()) {
-                lock.unlock();
-            }
-        }
+        tryInsertCouponIdem(idemKey, activityId, userId, payload);
     }
 
     private String writeJson(Object value) {

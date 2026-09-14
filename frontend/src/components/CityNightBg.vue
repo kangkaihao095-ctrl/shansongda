@@ -7,11 +7,11 @@ let onResize
 onMounted(() => {
   const el = canvas.value
   const ctx = el.getContext('2d')
-  const dots = Array.from({ length: 48 }, () => ({
+  const dots = Array.from({ length: 16 }, () => ({
     x: Math.random(),
-    y: Math.random() * 0.7,
-    r: 0.6 + Math.random() * 1.8,
-    s: 0.15 + Math.random() * 0.4
+    y: Math.random() * 0.62,
+    r: 0.4 + Math.random() * 0.9,
+    s: 0.08 + Math.random() * 0.18
   }))
   onResize = () => {
     el.width = el.clientWidth * devicePixelRatio
@@ -33,7 +33,7 @@ onMounted(() => {
     g.addColorStop(1, '#ff7a1a')
     ctx.fillStyle = g
     ctx.fillRect(0, 0, w, h)
-    ctx.fillStyle = 'rgba(255,230,160,.85)'
+    ctx.fillStyle = 'rgba(255,230,160,.28)'
     dots.forEach((d) => {
       const x = ((d.x + t * d.s * 0.00004) % 1) * w
       ctx.beginPath()

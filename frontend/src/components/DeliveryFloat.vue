@@ -1,10 +1,10 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import SsdMap from './SsdMap.vue'
 import CookingStatus from './CookingStatus.vue'
 import { etaLabel } from '../status'
-import { api } from '../api'
+import { api, token } from '../api'
 import { onImgError } from '../img'
 import { session } from '../session'
 
@@ -13,7 +13,9 @@ const router = useRouter()
 const order = ref(null)
 const track = ref(null)
 const open = ref(false)
-let timer
+const viaSse = ref(false)
+let pollTimer
+let abort = new AbortController()
 
 const visible = computed(() => session.me?.role === 'USER' && !!order.value)
 const etaClock = computed(() => etaLabel(track.value?.etaMs, order.value?.status))
@@ -42,10 +44,15 @@ const userPoint = computed(() => {
   if (track.value?.userLat == null) return null
   return { lat: track.value.userLat, lon: track.value.userLon }
 })
+const merchantPoint = computed(() => {
+  if (track.value?.merchantLat == null) return null
+  return { lat: track.value.merchantLat, lon: track.value.merchantLon }
+})
 const routePts = computed(() => {
   const route = track.value?.route
+  if (route?.points?.length) return route.points
   const pts = []
-  for (const key of ['riderToMerchant', 'merchantToUser', 'points']) {
+  for (const key of ['riderToUser', 'riderToMerchant', 'merchantToUser', 'points']) {
     const arr = route?.[key]
     if (Array.isArray(arr)) {
       for (const p of arr) {
@@ -55,25 +62,71 @@ const routePts = computed(() => {
   }
   return pts
 })
+const routeSegs = computed(() => {
+  const route = track.value?.route
+  if (route?.segments?.length) return route.segments
+  return [...(route?.riderToUser?.segments || []), ...(route?.riderToMerchant?.segments || []), ...(route?.merchantToUser?.segments || [])]
+})
 
-async function tick() {
+function applyPayload(data) {
+  const o = data?.order
+  if (!o || !LIVE.includes(o.status)) {
+    order.value = null
+    track.value = null
+    open.value = false
+    return
+  }
+  order.value = o
+  track.value = o
+}
+
+async function pollOnce() {
   if (session.me?.role !== 'USER') {
     order.value = null
     track.value = null
     return
   }
   try {
-    const list = (await api('/api/orders?size=10&page=1')).data?.items || []
-    const hit = list.find((o) => LIVE.includes(o.status))
-    order.value = hit || null
-    if (!hit) {
-      track.value = null
-      open.value = false
-      return
-    }
-    track.value = (await api(`/api/orders/${hit.id}/track`)).data
+    const data = (await api('/api/orders/active-delivery')).data
+    applyPayload(data)
   } catch {
-    /* 轮询失败保持上一帧 */
+    /* 保持上一帧 */
+  }
+}
+
+async function startSse() {
+  if (session.me?.role !== 'USER') return false
+  const t = token()
+  if (!t || !abort) return false
+  try {
+    const res = await fetch('/api/orders/stream-active', {
+      headers: { Authorization: 'Bearer ' + t, Accept: 'text/event-stream' },
+      signal: abort.signal
+    })
+    if (!res.ok || !res.body) return false
+    viaSse.value = true
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const chunks = buf.split('\n\n')
+      buf = chunks.pop() || ''
+      for (const chunk of chunks) {
+        const line = chunk.split('\n').find((l) => l.startsWith('data:'))
+        if (!line) continue
+        try {
+          applyPayload(JSON.parse(line.slice(5).trim()))
+        } catch { /* 忽略半包 */ }
+      }
+    }
+    return true
+  } catch (e) {
+    if (e?.name === 'AbortError') return true
+    viaSse.value = false
+    return false
   }
 }
 
@@ -82,11 +135,41 @@ function goDetail() {
   router.push('/orders/' + order.value.id)
 }
 
-onMounted(() => {
-  tick()
-  timer = setInterval(tick, 5000)
+function stopLive() {
+  abort?.abort()
+  abort = new AbortController()
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  viaSse.value = false
+  order.value = null
+  track.value = null
+}
+
+async function startUserLive() {
+  stopLive()
+  if (session.me?.role !== 'USER') return
+  await pollOnce()
+  ;(async () => {
+    for (let i = 0; i < 40 && !abort.signal.aborted; i++) {
+      const ok = await startSse()
+      if (abort.signal.aborted) return
+      if (!ok) break
+    }
+    if (abort.signal.aborted) return
+    viaSse.value = false
+    pollTimer = setInterval(pollOnce, 8000)
+  })()
+}
+
+watch(() => session.me?.role, (role) => {
+  if (role === 'USER') startUserLive()
+  else stopLive()
+}, { immediate: true })
+onUnmounted(() => {
+  stopLive()
 })
-onUnmounted(() => clearInterval(timer))
 </script>
 
 <template>
@@ -110,16 +193,18 @@ onUnmounted(() => clearInterval(timer))
       <div class="eta-map">
         <SsdMap
           :points="routePts"
+          :segments="routeSegs"
           :rider="riderPoint"
+          :merchant="merchantPoint"
           :user="userPoint"
           :eta="etaClock"
+          :hint="route?.trafficHint"
         />
       </div>
       <div class="eta-body">
         <div class="muted">订单 {{ order.id }} · {{ goods }}</div>
         <div style="margin:6px 0">{{ riderName }} · {{ statusHint }}</div>
         <CookingStatus v-if="cooking" compact style="margin:0 0 8px" />
-        <p v-if="track?.riderProfile?.bio" class="muted" style="margin:0 0 8px">{{ String(track.riderProfile.bio).slice(0, 48) }}</p>
         <button class="btn" style="width:100%" type="button" @click="goDetail">查看订单详情</button>
       </div>
     </div>

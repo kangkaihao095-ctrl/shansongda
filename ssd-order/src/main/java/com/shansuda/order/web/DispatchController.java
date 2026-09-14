@@ -3,6 +3,7 @@ package com.shansuda.order.web;
 import com.shansuda.common.api.ApiResult;
 import com.shansuda.order.route.RouteService;
 import com.shansuda.order.service.OrderService;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -33,6 +34,11 @@ public class DispatchController {
     @PostMapping("/api/dispatch/assign/{orderId}")
     public ApiResult<Map<String, Object>> assign(@PathVariable long orderId) {
         return ApiResult.ok(orderService.assign(orderId));
+    }
+
+    @GetMapping({"/api/dispatch/route-metrics", "/internal/route/metrics"})
+    public ApiResult<Map<String, Object>> routeMetrics() {
+        return ApiResult.ok(routeService.metricsSnapshot());
     }
 
     public record RouteRequest(double riderLat, double riderLon, double merchantLat, double merchantLon,

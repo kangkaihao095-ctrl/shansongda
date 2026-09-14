@@ -2,7 +2,7 @@ dataSources:
   ds0:
     dataSourceClassName: com.zaxxer.hikari.HikariDataSource
     driverClassName: com.mysql.cj.jdbc.Driver
-    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_0?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_0?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000&serverTimezone=Asia/Shanghai
     username: shansuda
     password: shansuda
     connectionTimeout: 8000
@@ -10,7 +10,7 @@ dataSources:
   ds1:
     dataSourceClassName: com.zaxxer.hikari.HikariDataSource
     driverClassName: com.mysql.cj.jdbc.Driver
-    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_1?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_1?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000&serverTimezone=Asia/Shanghai
     username: shansuda
     password: shansuda
     connectionTimeout: 8000
@@ -18,7 +18,7 @@ dataSources:
   ds2:
     dataSourceClassName: com.zaxxer.hikari.HikariDataSource
     driverClassName: com.mysql.cj.jdbc.Driver
-    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_2?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_2?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000&serverTimezone=Asia/Shanghai
     username: shansuda
     password: shansuda
     connectionTimeout: 8000
@@ -26,7 +26,7 @@ dataSources:
   ds3:
     dataSourceClassName: com.zaxxer.hikari.HikariDataSource
     driverClassName: com.mysql.cj.jdbc.Driver
-    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_3?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000
+    jdbcUrl: jdbc:mysql://127.0.0.1:3316/ssd_order_3?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&connectTimeout=8000&socketTimeout=20000&serverTimezone=Asia/Shanghai
     username: shansuda
     password: shansuda
     connectionTimeout: 8000

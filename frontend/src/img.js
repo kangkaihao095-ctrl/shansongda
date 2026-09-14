@@ -1,4 +1,6 @@
 export const IMG_PLACEHOLDER = '/images/ph/food.jpg'
+export const RIDER_COVER = '/images/rider-cover.jpg'
+export const MERCHANT_COVER = '/images/merchant-cover.jpg'
 
 export const CAT_KEYWORDS = {
   food: 'chinese-food',
@@ -63,12 +65,32 @@ export function imgSrc(url, category, seed, kind) {
   return s
 }
 
-/** 失败落到同品类真实照片，不要 SVG 色块。 */
+export function riderAvatarSrc(url) {
+  const s = url == null ? '' : String(url)
+  if (!s || isBrokenRemote(s) || s.startsWith('data:text')) return RIDER_COVER
+  return s
+}
+
+/** 店铺头图：优先 coverUrl / shops/{id}.jpg，否则统一商家封面实拍。 */
+export function merchantCoverSrc(merchant) {
+  const m = merchant || {}
+  const id = m.id || m.userId || m.merchantId
+  const cat = m.category || 'fresh'
+  if (id || m.coverUrl) return imgSrc(m.coverUrl, cat, id ? 'shop-' + id : 'merchant', 'shop')
+  return MERCHANT_COVER
+}
+
+export function merchantAvatarSrc(url, merchant) {
+  const s = url == null ? '' : String(url)
+  if (!s || isBrokenRemote(s) || s.startsWith('data:text')) return merchantCoverSrc(merchant)
+  return s
+}
+
+/** 失败落到同品类真实照片，不要 SVG 色块。骑手头像可指定 data-fallback-src。 */
 export function onImgError(e) {
   const el = e?.target
   if (!el || el.dataset.fallback === 'done') return
-  const cat = el.dataset.category || 'food'
-  const ph = catPlaceholder(cat)
+  const ph = el.dataset.fallbackSrc || catPlaceholder(el.dataset.category || 'food')
   el.dataset.fallback = 'done'
   const cur = String(el.getAttribute('src') || el.src || '')
   if (cur === ph || cur.endsWith(ph)) return

@@ -67,4 +67,41 @@ class MerchantStatsAggregatorTest {
         assertEquals(365, MerchantStatsAggregator.resolveDays(null, 365));
         assertEquals(30, MerchantStatsAggregator.resolveDays(null, 30));
     }
+
+    @Test
+    void monthRangeIsThirtyCalendarDaysNotMonthlyBuckets() {
+        LocalDate today = LocalDate.of(2026, 9, 11);
+        var rows = List.of(
+                new MerchantStatsAggregator.OrderRow("COMPLETED", 2000, 500,
+                        ZonedDateTime.of(today.minusDays(29), LocalTime.NOON, MerchantStatsAggregator.ZONE).toInstant()),
+                new MerchantStatsAggregator.OrderRow("COMPLETED", 1800, 400,
+                        ZonedDateTime.of(today.minusDays(10), LocalTime.NOON, MerchantStatsAggregator.ZONE).toInstant()),
+                new MerchantStatsAggregator.OrderRow("COMPLETED", 900, 300,
+                        ZonedDateTime.of(today, LocalTime.NOON, MerchantStatsAggregator.ZONE).toInstant())
+        );
+        MerchantStatsAggregator.Stats stats = MerchantStatsAggregator.aggregate(rows, today, 30);
+        assertEquals("day", stats.grain());
+        assertEquals("30d", stats.range());
+        assertEquals(30, stats.series().size());
+        assertEquals(today.minusDays(29).toString(), stats.series().get(0).date());
+        assertEquals(today.toString(), stats.series().get(29).date());
+        assertTrue(stats.series().stream().anyMatch(p -> p.gmvCents() > 0));
+        assertEquals(today.minusDays(29), MerchantStatsAggregator.windowStart(today, 30));
+    }
+
+    @Test
+    void rollupDoesNotAppendUnknownDatesOrShrinkThirtyDaySeries() {
+        LocalDate today = LocalDate.of(2026, 9, 11);
+        var rolled = List.of(
+                new MerchantStatsAggregator.DayPoint("2026-09-11", 2, 3000, 1, 0),
+                new MerchantStatsAggregator.DayPoint("2026-09-10", 1, 1200, 1, 0),
+                new MerchantStatsAggregator.DayPoint("2026-08-01", 9, 99999, 9, 0)
+        );
+        MerchantStatsAggregator.Stats stats = MerchantStatsAggregator.fromRollup(rolled, today, 30, 1);
+        assertEquals(30, stats.series().size());
+        assertEquals(today.minusDays(29).toString(), stats.series().get(0).date());
+        assertEquals(today.toString(), stats.series().get(29).date());
+        assertTrue(stats.series().stream().noneMatch(p -> "2026-08-01".equals(p.date())));
+        assertEquals(3000, stats.todayGmvCents());
+    }
 }

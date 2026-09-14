@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { groupSkus, reportSummary, centsFromYuan, yuanDraft } from '../src/merchant.js'
+import { groupSkus, reportSummary, centsFromYuan, yuanDraft, shopIsOpen } from '../src/merchant.js'
 import { yuan } from '../src/brand.js'
 
 describe('merchant board helpers', () => {
@@ -40,5 +40,24 @@ describe('merchant board helpers', () => {
   it('converts yuan draft to cents', () => {
     expect(centsFromYuan('12.5')).toBe(1250)
     expect(yuanDraft(1280)).toBe('12.80')
+  })
+
+  it('labels 30d as 近一月', () => {
+    const text = reportSummary({ range: '30d', series: Array.from({ length: 30 }, (_, i) => ({
+      date: '2026-08-' + String(i + 1).padStart(2, '0'),
+      orderCount: 1,
+      gmvCents: 1000,
+      completedCount: 1,
+      refundCents: 0
+    })) })
+    expect(text).toContain('近一月')
+    expect(text).toContain('30 单')
+  })
+
+  it('treats open=false or OFFLINE as closed', () => {
+    expect(shopIsOpen({ onlineStatus: 'ONLINE' })).toBe(true)
+    expect(shopIsOpen({ onlineStatus: 'OFFLINE' })).toBe(false)
+    expect(shopIsOpen({ open: false, onlineStatus: 'ONLINE' })).toBe(false)
+    expect(shopIsOpen(null)).toBe(true)
   })
 })

@@ -72,6 +72,36 @@ public class RiderWorkService {
     }
 
     @Transactional
+    public void assertCanAccept(long userId) {
+        RiderWorkday row = tick(userId, true);
+        String deny = denyGrab(userId, row);
+        if (deny != null) {
+            throw BizException.conflict(deny, RiderWorkPolicy.grabDenyReason(deny));
+        }
+    }
+
+    public Map<String, Object> canAccept(long userId) {
+        RiderWorkday row = ensureToday(userId);
+        String online = riderOnlineStatus(userId);
+        String deny = RiderWorkPolicy.grabDenyCode(online, row.getForcedOffline(), row.getWorkedSeconds(), maxSeconds());
+        Map<String, Object> body = snapshot(row, 0);
+        body.put("onlineStatus", online);
+        body.put("allowed", deny == null);
+        body.put("code", deny);
+        body.put("reason", RiderWorkPolicy.grabDenyReason(deny));
+        return body;
+    }
+
+    private String denyGrab(long userId, RiderWorkday row) {
+        return RiderWorkPolicy.grabDenyCode(
+                riderOnlineStatus(userId), row.getForcedOffline(), row.getWorkedSeconds(), maxSeconds());
+    }
+
+    private String riderOnlineStatus(long userId) {
+        return riderRepo.findById(userId).map(Rider::getOnlineStatus).orElse("OFFLINE");
+    }
+
+    @Transactional
     public Map<String, Object> onGoingOnline(long userId) {
         assertCanGoOnline(userId);
         RiderWorkday row = ensureToday(userId);
@@ -101,6 +131,7 @@ public class RiderWorkService {
             row.setForcedOffline(true);
             riderRepo.findById(userId).ifPresent(rider -> {
                 rider.setOnlineStatus("OFFLINE");
+                rider.setAutoReport(false);
                 rider.setUpdateTime(now);
                 rider.setVersion(rider.getVersion() + 1);
                 riderRepo.save(rider);
@@ -145,5 +176,21 @@ public class RiderWorkService {
 
     public Map<String, Object> workStats(long userId, int completedToday) {
         return snapshot(ensureToday(userId), completedToday);
+    }
+
+    public Map<String, Integer> secondsByDay(long userId, LocalDate from, LocalDate to) {
+        Map<String, Integer> out = new LinkedHashMap<>();
+        LocalDate cursor = from;
+        while (!cursor.isAfter(to)) {
+            out.put(cursor.toString(), 0);
+            cursor = cursor.plusDays(1);
+        }
+        for (RiderWorkday row : workdayRepo.findByUserIdAndWorkDateBetween(userId, from, to)) {
+            if (row.getWorkDate() == null) {
+                continue;
+            }
+            out.put(row.getWorkDate().toString(), row.getWorkedSeconds());
+        }
+        return out;
     }
 }

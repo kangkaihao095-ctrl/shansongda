@@ -1,11 +1,12 @@
 <script setup>
 import { computed } from 'vue'
-import { initials, yuan } from '../brand'
+import { yuan } from '../brand'
 import { onImgError } from '../img'
 
 const props = defineProps({
   profile: { type: Object, default: () => ({}) },
-  compact: { type: Boolean, default: false }
+  compact: { type: Boolean, default: false },
+  hideAvatar: { type: Boolean, default: false }
 })
 
 const years = computed(() => {
@@ -20,21 +21,25 @@ const rateText = computed(() => {
   if (!Number.isFinite(r)) return '—'
   return `${Math.round(r * 1000) / 10}%`
 })
+
+const bioText = computed(() => String(props.profile.bio || '')
+  .replace(/准时率按完成单[\s\S]*$/g, '')
+  .replace(/\n{2,}/g, '\n')
+  .trim())
 </script>
 
 <template>
   <section class="rider-card" :class="{ compact }">
     <div class="rider-card-head">
-      <div class="avatar">
+      <div v-if="!hideAvatar" class="avatar">
         <img
-          v-if="profile.avatarUrl"
-          :src="profile.avatarUrl"
+          :src="profile.avatarUrl || '/images/rider-cover.jpg'"
           alt=""
           :data-seed="'rider-' + profile.riderId"
+          data-fallback-src="/images/rider-cover.jpg"
           @error="onImgError"
           style="width:72px;height:72px;border-radius:50%;object-fit:cover"
         />
-        <span v-else>{{ initials(profile.displayName) }}</span>
       </div>
       <div style="flex:1">
         <div class="row" style="justify-content:space-between">
@@ -45,8 +50,8 @@ const rateText = computed(() => {
         <div v-if="!compact" class="muted" style="margin-top:4px">累计打赏 {{ yuan(profile.tipCentsTotal) }}</div>
       </div>
     </div>
-    <p class="rider-bio">{{ profile.bio }}</p>
-    <p v-if="!compact" class="muted" style="font-size:12px">{{ profile.onTimeRateNote }}</p>
+    <p v-if="bioText" class="rider-bio">{{ bioText }}</p>
+    <p v-if="!compact && profile.onTimeRateNote" class="muted" style="font-size:12px">{{ profile.onTimeRateNote }}</p>
     <div v-if="compact" class="muted">累计打赏 {{ yuan(profile.tipCentsTotal) }}</div>
     <div class="badge-wall">
       <span

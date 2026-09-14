@@ -14,11 +14,13 @@
 
 不做：
 
-- Nacos / 微信支付宝进件 / 真实 4 台 MySQL / 在线扩容迁移 / 把压测数字当线上 SLA。
+- Nacos / 微信支付宝进件 / 真实 4 台物理 MySQL / 千万订单灌库 / 在线扩容迁移。
+- 把 P95 / 200QPS / 1.2 万节点写成已测 SLA（面试口径仍见原 MD，本仓库不把压测数字当线上指标）。
 - 独立 Leaf 集群；号段模式内嵌在 order-service。
 - 履约单独进程。
+- 本机新起 18084 / 18085 / ES / Canal JVM。**Neo4j 容器可以起**：`docker compose up -d neo4j`（`ssd-neo4j`，bolt `7687`），算路仍在 **order:18083** 内连 GDS，不新起 `ssd-dispatch`。
 
-本地模式：`ssd.mode=auto`。本机不跑 Neo4j / ES / Canal / 18084 / 18085。算路并进 **order:18083**（`GridPathFinder` 内存网格 A*，无启发式则 Dijkstra，同构路网不是高德）；附近骑手并进 **account:18081**（MySQL `rider` + Haversine）。生产口径仍是 Neo4j GDS 与 Canal+ES。无 Canal 时 search 单测用假事件，compose 演示必须起 Canal。
+本地模式：`ssd.mode=auto`。本机不跑 ES / Canal / 18084 / 18085。算路并进 **order:18083**（启动加载 classpath `shanghai-huangpu.osm`，`GridPathFinder` 内存 A*；两端有坐标用启发式，否则 Dijkstra。**不是高德算路**）。order 启动会 **ping** `ssd.neo4j.uri`（默认 bolt://127.0.0.1:7687）：通则导入同一张 OSM 并走 **GDS A\***（启发式失败 → GDS Dijkstra）；不通则 warn，**降级内存 OSM A\***，不拖垮启动。本机可 `compose up neo4j` 让 ping 成功。不可达标 `HAVERSINE_FALLBACK`。附近骑手并进 **account:18081**（MySQL `rider` + Haversine）。生产 / 完整演示口径仍是 Neo4j GDS 与 Canal+ES。无 Canal 时 search 单测用假事件，compose 演示必须起 Canal。demoGrid 仅 dry-run/单测，不是默认演示路网。分钟级拥堵（默认 `ssd.dispatch.congestion-ms=60000`）：**有 Key 优先高德交通态势 → 写入 Neo4j/内存边 `congestion`/`cost` → GDS A\* 不变**。order 调 Web 服务 `GET https://restapi.amap.com/v3/traffic/status/rectangle`（黄浦 OSM bbox 分块，单块不超过高德矩形面积限制；`extensions=all`），解析道路 `status`（1 畅通 / 2 缓行 / 3 拥堵 / 4 严重拥堵）与 `speed`，按路名与几何邻近匹配 OSM 边，`cost=baseTime*congestion`，不重建拓扑、不算高德驾车 path。高德成功 → `trafficSource=AMAP`，文案诚实「高德态势」，**不要再叠一层画像把真数据盖掉**。高德失败且曾经成功 → 保留上次边权，`LAST_SUCCESS`。无 Key 或高德失败且从未成功 → 时段路况画像 `trafficSource=PROFILE`（`TrafficProfile`，Asia/Shanghai：工作日早高峰约 07:30–09:30 / 晚高峰约 17:00–19:30 主干/快速路更堵，午间 11:30–13:30 次干轻度缓行，平峰大部分畅通，周五晚略重于周一，周末白天景区/南京东路/外滩略堵、高速相对好；按 OSM `highway` 与路名加权，双向略不对称；道路 id+日期小时稳定 hash，分钟内 sin 微抖。**禁止 `Random` 每分钟乱涂、禁止静默全图畅通、禁止宣称已是高德真路况或假称拉到了高德历史**）。未匹配等级的边接近 1.0，全图不要全红。旧 `seedTraces` 骑手点可作高峰补充，主因必须是时段+道路等级。Key 为 `ssd.amap.key` / `SSD_AMAP_KEY`（与前端底图共用，需开通「交通态势」）。失败不算路失败。
 
 ## 1. 订单状态机
 
@@ -34,8 +36,10 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 用户端 `PAID` 展示「商家已接单·备餐中」，骑手/商家端同一状态展示「待骑手接单」。`COMPLETED` 用户/商家「已完成」，骑手「已送达」。无 ETA 时写「商家备餐中」（待接单/备餐）或「骑手正在赶往商家」，禁止「规划中」。三端文案以 `frontend/src/status.js` 为准。
 
 - 支付成功：`CREATED → MERCHANT_PENDING`（待商家接单），商家接单后才到 `PAID`（待骑手接单）。抢单仍仅 `PAID → ACCEPTED`。
+- 商家出餐超时：`ssd.order.merchant-accept-timeout-min` 默认 15。定时扫 `MERCHANT_PENDING`，超时且店铺营业中则自动 `merchant-accept` → `PAID`（用户文案仍是「商家已接单·备餐中」）；打烊则自动退款。领域时钟可注入。
 - 未支付取消必须填原因，先入 `CANCELLING` 再确认 `CANCELLED`，不是点一下立刻消失。
 - 已支付走退款申请 `REFUNDING`，商家同意/拒绝；配送中不能瞬删，申请退款按现有 `PenaltyStrategy` 记 `penalty_cents`。
+- 退款驳回必须先写入 `REFUND_REJECTED`（`saveAndFlush`，DB 可观测该状态）再按状态机 `resumeAfterReject` 迁回 `resume_status` 继续履约。
 - `DELIVERING` **不能**直接取消（取消受状态约束）。
 - `COMPLETED` / `CANCELLED` / `REFUNDED` 为终态，禁止回迁。
 - 状态机集中在 `com.shansuda.order.fulfill.OrderStateMachine`，Service 不得散落 if-else 迁状态。
@@ -49,6 +53,9 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 
 - `DistanceFreight`：按商家→用户直线距离分档。
 - `PeakFreight`：高峰时段在距离运费上乘系数。
+- `MemberFreight`：包装在上两者之上。Lv3+ 减 200 分，年卡再减 100 分，下限 0。快照名如 `DistanceFreight+MemberFreight`。preview 返回 `memberFreightOffCents`。
+
+券只抵商品、不抵运费（`AMOUNT`/`PERCENT`）。另有运费券 `FREIGHT`：`preview.couponOptions[]` 含 `coversFreight=true`、`freightDiscountCents`。种子一张「运费立减 3 元」。店铺满减 `merchant_promo` **先于**平台券（先店铺满减再平台券，避免双扣歧义）。
 
 违约 `PenaltyStrategy`（取消时按**当前状态**）：
 
@@ -70,18 +77,20 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 `ssd_account`
 
 - `app_user`：id, phone, password_hash, role(`USER|RIDER|MERCHANT`), display_name, avatar_url（可空，相对路径或 data URL）, status, created_at, last_login_at（发券活跃度）
-- `rider`：user_id PK, online_status(`OFFLINE|ONLINE`), accept_status(`IDLE|BUSY`), lat, lon, update_time, version（每次位置/状态更新 +1）
-- `merchant`：user_id PK, shop_name, lat, lon, address, category, cover_url, rating, promo, online_status(`ONLINE|OFFLINE`，营业中/打烊), rating_avg, rating_count, completed_count（完成单销量，供推荐）, auto_accept（自动接单，默认 false=手动）
+- `rider`：user_id PK, online_status(`OFFLINE|ONLINE`), accept_status(`IDLE|BUSY`), lat, lon, update_time, version（每次位置/状态更新 +1）, auto_report（位置自动上报，默认 false）, auto_report_interval_sec（默认 5，范围 3–30）
+- `merchant`：user_id PK, shop_name, lat, lon, address, category, cover_url, rating, promo, intro（店铺简介，可空）, phone（营业电话，可空，不是登录手机）, online_status(`ONLINE|OFFLINE`，营业中/打烊), rating_avg, rating_count, completed_count（完成单销量，供推荐）, auto_accept（自动接单，默认 false=手动）
 - `merchant_sku`：id, merchant_id, name, group_name, price_cents, origin_price_cents, image_url, spec, stock, status(`ONLINE|OFFLINE`，上下架), description, detail, month_sales, like_count, sku_key；**UNIQUE(sku_key)** 供种子幂等
 - `merchant_review`：id, merchant_id, order_id, user_id, score(1-5), content（可空）, photo_urls（JSON 数组，最多 3 张 `/api/review-photos/`）, rider_score(1-5 可空，仅骑手星级), sku_names, like_count, created_at；**UNIQUE(order_id)** 一单一评
 - `review_like`：user_id + review_id **PRIMARY KEY**（唯一键防同一用户重复点赞同一评论；再点为取消）
-- `coupon`：id, name, merchant_id（可空=平台券）, activity_id（可空）, type(`AMOUNT|PERCENT`), min_spend_cents, discount_cents, percent_off, stock, start_at, end_at, status, code（模板/实例）, member_only, icon（`minus|free|member|newcomer|category|percent`）
+- `coupon`：id, name, merchant_id（可空=平台券）, activity_id（可空）, type(`AMOUNT|PERCENT|FREIGHT`), min_spend_cents, discount_cents, percent_off, stock, start_at, end_at, status, code（模板/实例）, member_only, icon（`minus|free|member|newcomer|category|percent`；运费券 `free`）
 - `coupon_template`：code PK, name, scene(`NEWCOMER|LAPSED|FREQUENT|RETURN|MEMBER|HOME|LOGIN`), type, min_spend_cents, discount_cents, percent_off, member_only, icon, valid_seconds（新客 7 天、登录礼 24h、常规/首页 3 天；会员红包到当周周日不计此字段）
 - `coupon_grant_log`：grant_key PK（`GRANT:{userId}:{date}:{scene}`、`GRANT:{userId}:ONCE:NEWCOMER`、`GRANT:{userId}:{date}:HOME:{slot}` 或 `LOGIN_GIFT:{userId}:{date}`）, user_id, scene, created_at
 - `user_coupon`：id, coupon_id, user_id, status(`UNUSED|USED`)，列表对外再派生 `EXPIRED`（UNUSED 且 `end_at` 已过）, claimed_at, used_order_id；**UNIQUE(coupon_id, user_id)**。可重复发的场次券每次实例化新 coupon 行
 - `member_sub`：user_id PK, plan(`MONTH|QUARTER|YEAR|AUTO_MONTH`), level(1-7), paid_cents_net（净实付分）, expire_at, status(`ACTIVE|EXPIRED`), year_member, auto_renew, updated_at
 - `member_pay_log`：id, user_id, plan, channel, cents, auto_renew, created_at（开通/续期流水；连续包月假支付不真扣款也要写）
 - `user_address`：id, user_id, lat, lon, detail, is_default（推荐/配送半径用**当前默认地址**）
+- `user_cart`：user_id PK, merchant_id, shop_name, cover_url, items JSON, updated_at（服务端购物车草稿）
+- `merchant_promo`：merchant_id UNIQUE, min_spend_cents, off_cents, status（店铺满减，先于平台券）
 - `rider_workday`：user_id + work_date PK, worked_seconds, forced_offline, last_tick_at。按上海时区自然日累计 `ONLINE` 时长；达到 `ssd.rider.max-work-hours`（默认 8）强制 `OFFLINE`，当日不可再上线。
 - `rider_profile`：user_id PK, bio, started_on, on_time_rate, 冗余 tip_cents_total / rating_avg / rating_count / completed_count。准时率无真实超时轨迹时用种子 `on_time_rate`，简介标明口径。
 - `order_tip`：order_id PK（每单最多一次）, rider_id, user_id, cents, gift_code(`WATER|MILKTEA|GIFT|CHICKEN`), created_at。对外只收礼物档，服务端映射 cents：送瓶水 200 / 请喝奶茶 500 / 送份小礼物 1000 / 加个鸡腿 2000，拒绝任意金额
@@ -92,6 +101,7 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 - `activity_sku`：id, activity_id, sku_id, name, price_cents, origin_stock（展示用；**真实库存只在 Redis**）
 - `coupon_grant`：id, activity_id, user_id, scene, coupon_code, created_at；**UNIQUE(activity_id, user_id, scene)**
 - `seckill_idem`：idem_key PK, order_id, payload JSON, created_at（DB 唯一索引兜底）
+- `coupon_idem`：idem_key PK, activity_id, user_id, payload JSON, created_at（抢券 Lua + DB 双保险，仿 seckill_idem）
 
 `ssd_order_x.t_order_y`
 
@@ -101,11 +111,16 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 - activity_id（可空）, sku_snapshot JSON
 - pay_channel(`WECHAT|ALIPAY`), pay_status(`UNPAID|PAID|REFUNDING|REFUNDED`), paid_at, pay_amount_cents
 - cancel_reason, refund_reason, refund_reject_reason, resume_status
+- expect_deliver_at（可空预约送达）, rider_issue_code, rider_issue_text
 - idempotency_key, created_at, updated_at, version
 - **UNIQUE(idempotency_key)**
 - 订单号必须 `LeafAllocator.nextId()`，号段库 `ssd_leaf` 与分片业务库隔离。
 
-深分页：禁止大 offset 的 `LIMIT offset,size`。接口使用游标：`WHERE user_id=:uid AND id < :cursor ORDER BY id DESC LIMIT :size`，联合索引 `(user_id, id)`。先查 ID 再按 ID 回表（延迟关联），列表接口不 `SELECT *` 扫全行再丢弃。
+`ssd_order_0.merchant_stat_day`（单表，不按订单分片）
+
+- PK `(merchant_id, day)`：orders, gmv, completed, refund。支付完成增量 orders/gmv，完成单增量 completed，退款同意增量 refund。`GET /merchant/stats` 优先读滚表，无数据再 scatter。
+
+深分页：禁止大 offset 的 `LIMIT offset,size`。接口使用游标：`WHERE user_id=:uid AND id < :cursor ORDER BY id DESC LIMIT :size`，联合索引 `(user_id, id)` 以及 `(user_id, status, id)` / `(merchant_id, status, id)` / `(rider_id, status, id)`。`status` 下推分片 SQL；`q` 若等于状态枚举或中文全称也下推，其余关键词 scatter 但每分片最多扫 `OrderSearch.Q_SCAN_LIMIT=500` 行。先查 ID 再按 ID 回表（延迟关联），列表接口不 `SELECT *` 扫全行再丢弃。
 
 ## 4. API
 
@@ -117,23 +132,31 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 - `POST /auth/login` `{phone, password}`
 - `GET /me` 含 `displayName`、`avatarUrl`、`member`（等级/年费/到期）
 - `GET /me/reviews?page=&size=` 我的评价：店铺名、星级、内容、配图、时间、点赞、member 徽章；点进 `/shops/:id?reviewId=`
-- `GET /merchants/recommend?page=1&size=12` JWT 用户首页「为你推荐」，分页返回 `{items,page,size,total,hasNext,maxKm}`。**只用当前默认地址**算 Haversine；超过 `ssd.recommend.max-km`（默认 **5**）的店**不出现在推荐**。排序仍按 `RecommendScorer`，同分再按 merchantId 稳定切片，禁止重复同一家。前端触底加载，`hasNext=false` 展示「已经到底了」。可解释加权：有完成单历史时 `0.35*距离 + 0.25*品类亲和 + 0.20*销量 + 0.15*评分 + 0.05*在线`；未登录/无历史摊成 `0.45*距离 + 0.30*销量 + 0.20*评分 + 0.05*在线`。距离分仍 0km=1、≥8km=0（打分衰减与配送半径分开）；品类亲和=该品类在用户 COMPLETED 单中的频次/最大频次；销量=`log1p(completed_count)/log1p(max)`；评分=`rating_avg/5`；ONLINE=1，打烊=0.28。不引入 Spark
+- `GET /merchants/recommend?page=1&size=12` JWT 用户首页「为你推荐」，分页返回 `{items,page,size,total,hasNext,maxKm}`。**只用当前默认地址**算 Haversine；超过 `ssd.recommend.max-km`（默认 **5**）的店**不出现在推荐**。排序仍按 `RecommendScorer`，同分再按 merchantId 稳定切片，禁止重复同一家。前端触底加载，`hasNext=false` 展示「已经到底了」。可解释加权：有完成单历史时 `0.35*距离 + 0.25*品类亲和 + 0.20*销量 + 0.15*评分 + 0.05*在线`；未登录/无历史摊成 `0.45*距离 + 0.30*销量 + 0.20*评分 + 0.05*在线`。距离分仍 0km=1、≥8km=0（打分衰减与配送半径分开）；品类亲和=该品类在用户 COMPLETED 单中的频次/最大频次；销量=`log1p(completed_count)/log1p(max)`；评分项加大差评惩罚（均分低于 4.0 额外降权并平方）；ONLINE=1，打烊=0.28。不引入 Spark
 - `PUT /me` `{displayName}` 改昵称。三端「我的」不直接摊输入框；点头像或用户名弹出菜单/半屏：改昵称、换头像、取消。保存后关闭，主界面只显示名字。退出登录仍在底部。
 - `POST /me/avatar` multipart 上传头像，返回 `{avatarUrl}`
 - `POST /me/addresses` `{lat, lon, detail}` 仅 USER；写入 `user_address`；第一张自动默认
+- `GET /me/addresses` 地址簿列表
+- `PUT /me/addresses/{id}` `{lat, lon, detail}` 编辑
+- `DELETE /me/addresses/{id}` 删除；若删默认则把剩余第一张设默认
 - `PUT /me/addresses/{id}/default` 切换默认地址；推荐立即按新坐标重算
+- `GET /me/cart` / `PUT /me/cart` `{merchantId, shopName?, coverUrl?, items}` 服务端购物车草稿；登录后与 localStorage 合并（同店按 sku 取较大数量）
 - `PUT /me/location` `{lat, lon, detail?}` 改默认地址坐标（或无地址时新建）。首页可点顶栏地点：已有地址 / 微调 lat·lon / 上海地标（外滩、徐家汇、五角场、浦东陆家嘴）
 - `GET /map/config` 公开；有 `SSD_AMAP_KEY` 则 `provider=amap` 走高德 JS API；无 Key 则 `provider=amap-tiles`，前端用高德公开栅格（`webrd0{1-4}.is.autonavi.com`）出街道路网，OSM 仅作瓦片失败兜底。地图只负责展示。路径权威是 A*/Dijkstra：有 Neo4j 时 GDS，本机无 Neo4j 进程时 **order 内嵌同构内存路网**，不是高德算路
-- `PUT /riders/me/location` `{lat, lon}` 仅 RIDER；写 MySQL `rider`，version+1，并累加工时
-- `PUT /riders/me/status` `{onlineStatus, acceptStatus}`；上线受当日工时上限约束
+- `PUT /riders/me/location` `{lat, lon}` 仅 RIDER；写 MySQL `rider`，version+1，并累加工时。前端工作台可开「位置自动上报」：每 N 秒（默认 5）把当前位置做随机微调后调用本接口，模拟在跑，不要原地死点；关开关或下线即停 timer 并 `auto_report=false`。开关存在 localStorage 与 `rider.auto_report`，刷新保持。上报中用脉冲点，不要只有文字。
+- `PUT /riders/me/status` `{onlineStatus, acceptStatus}`；上线受当日工时上限约束；下线强制关掉自动上报
+- `PUT /riders/me/settings` `{autoReport, intervalSeconds?}` 仅 RIDER；interval 默认 5，夹在 3–30
 - `GET /riders/me/work-stats` 当日工时、剩余、是否强制下线、补贴口径
+- `GET /riders/me/charts?days=7` 仅骑手；近 N 个自然日（默认 7）`income[]` 与 `work[]`。大厅可抢单 **10s** 刷新、进行中 **3s**，工时/图表约 30s，不要整页同一间隔。
 - `GET /riders/me/profile` 仅骑手；资料卡：昵称、简介、接单年限/送餐天数、准时率（含口径说明）、累计打赏、勋章墙
 - `GET /riders/{id}/profile` 登录用户可看骑手简介摘要（订单详情 / 轨迹页）
-- `PUT /merchants/me/status` `{onlineStatus: ONLINE|OFFLINE}` 仅商家；打烊后用户端该店不可下单
-- `PUT /merchants/me/settings` `{autoAccept}` 仅商家；`true` 自动接单 / `false` 手动接单。支付成功进入 `MERCHANT_PENDING` 后，若自动接单则服务端立刻（`order.paid` 短延迟兜底）`merchant-accept` → `PAID`
-- `GET /merchants/me/skus` 仅本店商家；商品列表含 `stock`、`soldCount`（= `month_sales`）、`priceCents`、`groupName`、`status`，并按店内分类 `groups`
+- `PUT /merchants/me` `{name, address, category, intro, coverUrl, phone?}` 仅商家；改店名/品类/地址/简介/头图/营业电话，用户端店铺详情立刻生效。打烊开关单独保留，不要和改资料挤在一块
+- `POST /merchants/me/cover` multipart 店铺头图，存 `data/shop-covers/`，返回 `{coverUrl}`；静态 `GET /api/shop-covers/**`
+- `PUT /merchants/me/status` `{onlineStatus: ONLINE|OFFLINE}` 仅商家；打烊后用户端该店不可下单，同时把 `autoAccept` 置为 false。商家接单 / 自动接单均拒绝（`SHOP_CLOSED`），已接订单仍可出餐、指派、完成
+- `PUT /merchants/me/settings` `{autoAccept}` 仅商家；`true` 自动接单 / `false` 手动接单。打烊（`onlineStatus=OFFLINE`）时不可开自动接单。支付成功进入 `MERCHANT_PENDING` 后，若自动接单且店铺营业中则服务端立刻（`order.paid` 短延迟兜底）`merchant-accept` → `PAID`
+- `GET /merchants/me/skus` 仅本店商家；商品列表含 `stock`、`stockWarn`（默认库存 < 10 标红）、`soldCount`、`priceCents`、`groupName`、`status`，并按店内分类 `groups`
 - `PUT /merchants/me/skus/{id}` `{status?, priceCents?, stock?, groupName?}` 仅本店商家；改价立即对用户端店铺详情生效；上下架仍用 `ONLINE|OFFLINE`
-- `GET /merchants?category=&q=&page=&size=` 分页。默认 `page=1,size=12`，`size` 上限 30。返回 `{items,page,size,total,hasNext,maxKm}`，卡片含 coverUrl / rating / ratingAvg / ratingCount / completedCount / promo / `onlineStatus` / `open` / `distanceKm` / `inRange`。超配送半径仍可出现在分类列表，但标「超配送范围不可下单」且不可结算
+- `GET /merchants?category=&q=&page=&size=` 分页。默认 `page=1,size=12`，`size` 上限 30。`q` **服务端**按店名 / 品类键或中文名 / 地址 / **`merchant_sku.name`** 模糊搜，命中 SKU 时卡片带 `hitSkus[]`，点进店 `?skuId=` 可定位。`GET /merchants/recommend` 也可带 `q=` 在 5km 推荐池里搜。返回 `{items,page,size,total,hasNext,maxKm,includeOutOfRange}`。搜索默认与推荐同一 `maxKm`（5km）标注 `inRange`；`ssd.search.include-out-of-range` 默认 **true**（超距仍出现但标「超配送范围不可下单」且不可结算），设 false 则搜索也过滤超距。卡片含 coverUrl / rating / ratingAvg / ratingCount / completedCount / promo / `shopPromo` / `onlineStatus` / `open` / `distanceKm` / `inRange`
 - `GET /merchants/{id}` 店铺详情 + 商品列表（含 sku.status / description / detail / monthSales）以及 `distanceKm` / `inRange`；超距不可加购
 - `GET /merchants/{id}/skus/{skuId}` 单品详情
 - `GET /merchants/{id}/reviews?page=&size=` 店铺评价：评分（星）、文字、配图、匿名昵称、时间、点赞数、菜品、**闪会员**徽章
@@ -169,7 +192,8 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 
 闪会员：徽章主文案固定 **闪会员**（可加 `·金卡` / Lv），年费「年」标。不要用含糊「会员」当主标。`MemberBadge.vue` 统一用于个人中心、评论、订单评价；CSS 流光 + 轻微呼吸，年卡金边微光，评论 compact 只保留微光。个人中心「我的」参考美团：最上头像昵称 + 闪会员大卡，其下宫格入口（红包卡券数量、评价、地址、闪会员），不要在「我的」堆券列表。退出登录仍在底部。地图骑手用形象 marker（`/images/markers/rider.svg`，Leaflet `L.icon`），不要绿点；用户/商家用不同小图标。订单详情、送达浮窗、骑手大厅：状态「商家备餐中」配备餐动图（`/images/status/cooking.svg` + CSS）。完成页不要状态时间线，只显示当前一句状态；已完成大字「已完成」/「已送达」+ 完成时间。评价走独立页 `/orders/:id/review`（大星可点、商家可配图、骑手只打星）。打赏为礼物宫格四档，不要自定义金额输入。登录页预填账号密码，顶部小胶囊切用户/骑手/商家，**不**做一键登录大卡、**不**自动提交。
 
-用户端进行中配送（`PAID|ACCEPTED|ARRIVED|DELIVERING`）：右下角 `DeliveryFloat`，5s 轮询 `GET /orders` + `GET /orders/{id}/track` 的 `etaMs`，有 ETA 展示「预计 HH:mm 送达」，无 ETA 展示「商家备餐中」或「骑手正在赶往商家」。点开展开地图/骑手摘要/订单摘要，再进详情。底栏以上约 80px。骑手端不展示。
+用户端进行中配送（`PAID|ACCEPTED|ARRIVED|DELIVERING`）：右下角 `DeliveryFloat`，优先 SSE `GET /orders/stream-active`（JWT fetch 流，3s 推一次，120s 到期自动重连）；失败则 8s 轮询 `GET /orders/active-delivery`（进行中那一单 + eta + 坐标），**不要**再拉全列表。列表已有 `etaMs` 时前端不再 `attachEta` 打 `/track`。有 ETA 展示「预计 HH:mm 送达」，无 ETA 展示「商家备餐中」或「骑手正在赶往商家」。点开展开地图/骑手摘要/订单摘要，再进详情。底栏以上约 80px。骑手端不展示。
+商家待接单卡片按 `acceptDeadlineAt` **秒级倒计时**（默认距支付 15 分钟超时）。
 
 会员等级（代码 `MemberRules`，开通即 1 级；净实付=COMPLETED 累加 `pay_amount_cents`，从 COMPLETED 退到 REFUNDED 则扣回）：
 
@@ -191,25 +215,31 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 - `GET /activities/{id}` 秒杀详情（倒计时 `countdownSeconds`、当前档 `currentSku`、`nextRotateAt`、`rotateMinutes` 默认 10、SKU 池、原价/秒杀价、`originStock` 展示库存、`remainStock` Redis 实时剩余、当前用户本档 `grabbed`/`orderId`）。按时间片从活动 SKU 池轮换展示，Lua 仍按 skuId 扣，**抢完不切换展示商品**。种子至少 6 个不同 SKU。
 - `POST /activities/{id}/grab-coupon` 键：`活动ID + 用户ID + COUPON`
 - `POST /activities/{id}/seckill` `{skuId}` 键：`活动ID + 用户ID + SECKILL + skuId`（当前档 currentSku + 当前用户；历史上抢过别的 SKU 不算这一档已抢）。Lua GET 到 -1 时回放这一次的订单（带 `orderId`），不要跳到无关历史单。抢成功后 **不要立刻 rotate**；换档只按 `ssd.seckill.rotate-minutes`（默认 10）或 `nextRotateAt`。抢完仍展示当前商品、库存减少、按钮「去支付/已抢到」。库存 0 提示售罄，不要说抢过了。
-- `POST /orders/{orderId}/grab` 仅 RIDER；键：`订单ID + 骑手ID`
+- `POST /orders/{orderId}/grab` 仅 RIDER；键：`订单ID + 骑手ID`。occupy / grab 前调 account，`forced_offline` 或当日工时满则 409。
 
 订单 / 履约 / 支付
 
-- `POST /orders/preview` `{merchantId, addressId, items[{skuId,qty,priceCents}], couponId, clientPayCents}` 返回商品合计、运费策略报价、券抵扣、应付、`suggestedCouponId`、`couponOptions[]`（每张券抵扣后应付、是否可用、不可用原因如未满门槛、已过期）。`couponId` 省略则预览自动按最优券计价；`couponId=0` 表示不用券。最优：可用券里应付最低，相同则到期更近。选非最优也可下单，`clientPayCents` 仍校验。新客 15 元无门槛与会员无门槛券都参与。商家打烊或商品下架 409；**超配送半径 409** `OUT_OF_RANGE`
-- `POST /orders` 同上；应付 = 店铺商品合计 + 运费策略 - 券抵扣；`clientPayCents` 不一致则 409。商家 `OFFLINE` 或商品下架则 409。秒杀价只走活动下单，不走店铺价。订单号 Leaf 号段。**店铺价**下单成功扣 `merchant_sku.stock`（原子 `stock>=qty`）；秒杀仍只走 Redis Lua，不扣商家库存。完成单回写 SKU `month_sales`（对外 `soldCount`）。未支付确认取消 / 商家拒单 / 退款同意则回补店铺库存。
+- `POST /orders/preview` `{merchantId, addressId, items[{skuId,qty,priceCents}], couponId, clientPayCents}` 返回商品合计、店铺满减（`shopPromoCents`，先于平台券）、运费策略报价（含会员减免）、券抵扣（含 `coversFreight` / `freightDiscountCents`）、应付、`suggestedCouponId`、`couponOptions[]`、`expectSlots`（尽快 / 1 小时内）。`couponId` 省略则预览自动按最优券计价；`couponId=0` 表示不用券。商家打烊或商品下架 409；**超配送半径 409** `OUT_OF_RANGE`
+- `POST /orders` 同上，另可选 `expectDeliverAt`：`ASAP`（空）或 `WITHIN_1H`（约 1 小时后）或 ISO 时间；详情展示 `expectDeliverLabel`。应付 = 商品合计 - 店铺满减 + 运费 - 券抵扣；`clientPayCents` 不一致则 409。店铺价下单成功扣 `merchant_sku.stock`；秒杀仍只走 Redis Lua。完成单回写 `month_sales`。未支付确认取消 / 商家拒单 / 退款同意则回补店铺库存。
 - `POST /orders/{id}/pay` `{channel:WECHAT|ALIPAY, password}` 假收银台，密码 `147258`；成功 `CREATED→MERCHANT_PENDING`
 - `POST /orders/{id}/mock-pay` 兼容旧入口，等价微信支付
-- `GET /orders?size=5|10|20&page=1&q=&cursor&status&scene` 订单列表。`size` 仅允许 5/10/20，默认 10。`page` 从 1 起为页码分页（分片 scatter 后内存过滤再切片，禁止把全表丢给前端再切）。无 `page` 时仍可用游标深分页：`WHERE … AND id < :cursor ORDER BY id DESC LIMIT :size`，先查 ID 再按 ID 回表。`q` 服务端智能搜索：订单号（Leaf id）前缀或完整、状态中文/英文枚举（待支付、配送中、PAID…）、店铺名、商品名、地址关键词；骑手端快照里的商家名同样可命中。空 `q` 不过滤。骑手 `scene=hall` 只返回可抢（`PAID` 且未指派）+ 自己进行中（`ACCEPTED|ARRIVED|DELIVERING`）；`scene=done` 只返回自己的 `COMPLETED`。用户/商家不传 `scene`，仍按身份看全状态。返回 `items, size, page, total, hasNext, hasPrev, nextCursor, q, scene`。空结果 `items=[]`。
-- `GET /orders/{id}` 含 `reviewed` / `reviewId` / `canTip` / `tipped` / `tipCents` / `tipGiftCode` / `tipGiftLabel` / `riderProfile`（有骑手时）
-- `GET /orders/{id}/track` 接单后含骑手实时坐标、`etaMs`、两段路径点；有骑手时附简介摘要；完成后可打赏标志同上
-- `GET /merchant/stats?range=7d|30d|1y` 或 `days=7|30|365` 仅商家；今日单量/成交额/进行中/完成/退款金额 + 曲线（分片 scatter 后内存聚合）。近七日/近一月按日，近一年按月。额外 `summary`（近窗口单量/GMV/退款/热销 Top3/高峰日文案）、`topSkus`、`peakDate`，数字只来自订单聚合。
+- `GET /orders?size=5|10|20&page=1&q=&cursor&status&scene` 订单列表。`size` 仅允许 5/10/20，默认 10。`page` 从 1 起为页码分页。无 `page` 时仍可用游标深分页。`status` 与身份范围（`user_id` / `merchant_id`+`status` / `rider_id`）下推 SQL；page 模式每分片也带 LIMIT（不超过 `Q_SCAN_LIMIT=500`）。`q` 扫描上限仍每分片 500。骑手 `scene=hall` 只返回可抢（`PAID` 且未指派）+ 自己进行中。可抢单只对 **Top-8** 做路网算路，`(riderId,orderId)` 路径缓存 45s，其余 Haversine 粗 cost（`routeCoarse=true`）。进行中 `ARRIVED`/`DELIVERING` 用骑手当前坐标→用户（`R2U`），不要把商家当起点。有进行中单时按夹角/绕路增量标 `alongWay`（顺路近似，不是 TSP）。列表项含 `routeCost`/`etaMs`/`algorithm`/`congestionHint`，前端大厅用这些字段，**不要每个可抢单再打 `/track`**。用户/商家列表（非 `scene=hall`）对当前页进行中单（`PAID|ACCEPTED|ARRIVED|DELIVERING`，一页最多 20）填 `etaMs`/`etaLabel`（有骑手时 PAID/ACCEPTED 走 `cachedTwoLeg`，ARRIVED/DELIVERING 走骑手当前→用户；无骑手则商家→用户），45s 路径缓存，**COMPLETED/CANCELLED 不算路**；列表已有 `etaMs` 时 `OrdersView.attachEta` 不再打 `/track`。`scene=done` 只返回自己的 `COMPLETED`。
+- `GET /orders/active-delivery` 用户进行中那一单 + eta + 坐标（浮窗专用）
+- `GET /orders/stream-active` SSE，事件名 `delivery`，约 3s 推 `active-delivery` 同一体（浮窗路网点抽稀，避免整段 GDS 塞进 SSE）
+- `GET /orders/{id}` 含 `reviewed` / `canReorder` / `expectDeliverAt` / `riderIssueText` / `acceptDeadlineAt`（待商家接单倒计时）
+- `GET /orders/{id}/track` `ARRIVED`/`DELIVERING` 路径为骑手当前→用户（`riderToUser`），ETA 按这段重算
+- `POST /orders/{id}/rider-issue` `{code, text}` 仅接单骑手；商家订单详情可见
+- `GET /merchant/stats?range=7d|30d|1y` 或 `days=7|30|365` 仅商家；今日单量/成交额/进行中/完成/退款金额 + 曲线。优先读 `merchant_stat_day` 滚表，**窗口内滚表覆盖不足则分片 scatter 后按上海时区内存聚合**。额外 `summary`、`topSkus`、`peakDate`、**`avgPayCents`（客单价）**、**`refundRate`（退款金额/GMV）**，数字只来自订单聚合，不写假 SLA。
+- `POST /dispatch/assign/{orderId}` 自动指派。附近骑手先 Haversine 取 Top-5 再两段 GDS；能复用大厅 `(riderId,orderId)` 缓存则复用。
+- `GET /dispatch/route-metrics` 与 `GET /internal/route/metrics`：`engine`/`algorithm`/`fallback`/`cacheHits` 原子计数，不是 SLA。
+- `GET /riders/nearby?...` **默认 account:18081** MySQL bbox+Haversine。仅当配置了 `ssd.search.uri` / `SSD_SEARCH_URI` **且** `/actuator/health` 2xx 才切 search:18085。本机不要为了 nearby 去 docker start ES。
 - `GET /merchant/report.csv?range=7d|30d|1y` 仅商家；下载 CSV（日期、单量、GMV、完成、退款），与 stats 同一套聚合。
 - `GET /rider/stats` 仅骑手；本月完成单运费/penalty 分列 + 完成单数
 - `POST /orders/{id}/cancel` `{reasonCode, reasonText}` 未支付入取消中
 - `POST /orders/{id}/cancel-confirm` `CANCELLING → CANCELLED`
 - `POST /orders/{id}/refund` `{reasonCode, reasonText}`
 - `POST /orders/{id}/refund-review` `{approve, reasonText}` 仅商家
-- `POST /orders/{id}/merchant-accept` `MERCHANT_PENDING → PAID`
+- `POST /orders/{id}/merchant-accept` `MERCHANT_PENDING → PAID`；店铺打烊（`open=false` 或 `onlineStatus=OFFLINE`）时 409 `SHOP_CLOSED`，已接订单不受影响
 - `POST /orders/{id}/merchant-reject` `{reasonText}` 仅本店商家；`MERCHANT_PENDING → REFUNDING → REFUNDED`（拒绝接单并退款）
 - `POST /orders/{id}/arrive` `ACCEPTED → ARRIVED`
 - `POST /orders/{id}/deliver` 仅接单骑手，`ACCEPTED|ARRIVED → DELIVERING`
@@ -218,13 +248,13 @@ REFUNDING → REFUND_REJECTED（恢复 resume_status 继续履约）
 - `POST /review-photos` multipart 评价配图，类似头像，存 `data/review-photos/`，返回 `{photoUrl}`；静态 `GET /api/review-photos/**`
 - `POST /orders/{id}/tip` `{giftCode: WATER|MILKTEA|GIFT|CHICKEN}` 仅下单用户、仅 `COMPLETED`、须有 rider_id；每单最多一档（`order_tip.order_id` 唯一键），二次 409。禁止自定义 cents。成功累加 `rider_profile.tip_cents_total`
 
-券计算：`AMOUNT` 满 `min_spend_cents` 减 `discount_cents`；`PERCENT` 满门槛后按 `percent_off` 对商品合计打折。运费仍走 `FreightStrategy`，不发明 SLA 数字。
+券计算：`AMOUNT` 满 `min_spend_cents` 减 `discount_cents`；`PERCENT` 满门槛后按 `percent_off` 对商品合计打折；`FREIGHT` 只抵运费（`coversFreight=true`）。店铺满减先于平台券。运费仍走 `FreightStrategy`，不发明 SLA 数字。
 
 调度 / 检索
 
-- `POST /dispatch/route` `{riderLat, riderLon, merchantLat, merchantLon, userLat, userLon}` 返回两段路径 + 总 `cost` + `etaMs` + `algorithm`（`ASTAR|DIJKSTRA`）+ 展平 `points`。网关打 **order:18083**（`POST /api/dispatch/route` 与 `/internal/route`）。算法仍是 A*（两端有坐标）/ Dijkstra（缺启发式）。本机无 Neo4j 时用 classpath OSM 内存图，与 dispatch 模块同构，不是高德。
-- `POST /dispatch/assign/{orderId}` 自动指派（order 内实现；附近骑手走 account）
-- `GET /riders/nearby?lat&lon&radiusMeters|radius&onlineStatus&acceptStatus` 距离排序。网关打 **account:18081**。本机读 MySQL `rider` 的 lat/lon/online_status/accept_status，Haversine 过滤 radius 米，默认 ONLINE/IDLE。LBS 生产是 Canal+ES；本机无 ES 时 **MySQL 距离兜底**。
+- `POST /dispatch/route` `{riderLat, riderLon, merchantLat, merchantLon, userLat, userLon}` 返回两段路径 + 总 `cost` + `etaMs` + `algorithm`（`ASTAR|DIJKSTRA|HAVERSINE_FALLBACK`）+ `engine`（`NEO4J_GDS|MEMORY_OSM`）+ 展平 `points` + `segments[].congestion`。网关打 **order:18083**（`POST /api/dispatch/route` 与 `/internal/route`）。算法：两端有坐标 **A\*** / 缺启发式 **Dijkstra**。路网不可达时直线 Haversine，**不要假标 ASTAR**，标 `HAVERSINE_FALLBACK`。路网默认 classpath OSM（黄浦摘录），与 dispatch 模块同构，不是高德。order 内 `RouteService` 启动 ping Neo4j：通则 GDS A\*；不通则内存 OSM A\*。分钟级（默认 `ssd.dispatch.congestion-ms=60000`）：有 `SSD_AMAP_KEY` 先拉高德矩形交通态势；成功则只写高德匹配结果。无 Key 或高德失败且从未成功则写 **PROFILE 时段路况画像**（同一套 `congestion`/`cost`）。匹配后 `UNWIND + SET` 更新**当前使用的那张图**（Neo4j 或内存）边权，不重建拓扑。返回体另含 `trafficSource`（`AMAP|LAST_SUCCESS|PROFILE`；`DEFAULT` 仅首轮刷新前）与 `trafficHint`（PROFILE 须能看出是画像，例如「当前按黄浦时段路况画像计入 ETA（早高峰）」；AMAP 写「高德态势」；**不得写「已是真路况」**）。ETA 随边权变。前端绿黄红仍用 `segments.congestion`（1.0 畅通 / 1.4 缓行 / ≥1.6 拥堵）。本机不新起 18084。
+- `POST /dispatch/assign/{orderId}` 自动指派（order 内实现；附近骑手走 account）。附近骑手先 Haversine 取 Top-5 再两段 GDS，能复用大厅缓存则复用。按路径 cost 升序，cost 接近时 `on_time_rate`/`rating_avg` 高者优先。指派前校验工时。occupy 成功后同步 `acceptGrab`。
+- `GET /riders/nearby?lat&lon&radiusMeters|radius&onlineStatus&acceptStatus` 距离排序。**网关默认 account:18081** MySQL bbox+Haversine。仅当配置 `SSD_SEARCH_URI` 且 search 健康才切 18085。本机不要为了 nearby 去起 ES/Canal。LBS 生产仍是 Canal+ES。
 
 Lua 返回与 HTTP：`1` → 200 成功；`0` → 409 库存不足；`-1` → 200 **回放首次结果**（不是报错）。库存不足与重复必须分开，不用异常当控制流。
 
@@ -233,7 +263,7 @@ Lua 返回与 HTTP：`1` → 200 成功；`0` → 409 库存不足；`-1` → 20
 - **Caffeine**：活动配置、SKU 基础信息；TTL 5–15s + `maximumSize`；**库存不进本地缓存**。多实例不一致靠短 TTL，不做广播失效。
 - **Redis + Lua**（一次 `EVAL`）：`校验幂等键 → 读库存 → 判断 → 扣减 → 写幂等键+TTL`。返回 `1 / 0 / -1`。TTL = 活动周期 + 冗余。
 - **DB 唯一索引**兜底同一幂等键。
-- **Redisson** 可重入锁 + 看门狗（30s 租约、约 10s 续期）。粒度：秒杀/抢券 `活动ID+商品ID`，抢单 `订单ID`。**库存扣减本身走 Lua，锁只保护必须互斥的复合逻辑**（例如抢单成功后改接单状态 + 发 MQ 的临界区）。禁止全局锁。
+- **Redisson** 可重入锁 + 看门狗（30s 租约、约 10s 续期）。粒度：秒杀/抢券 `活动ID+商品ID`，抢单 `订单ID`。**库存扣减本身走 Lua，锁只保护必须互斥的复合逻辑**（例如抢单成功后改接单状态 + 发 MQ 的临界区）。禁止全局锁。`ssd.mode=auto|live` 且 Redisson 不可用时 **拒绝进入临界区**（error 日志 + 409 `LOCK_UNAVAILABLE`），禁止静默无锁；仅 `dry-run` 允许无锁。
 - **RabbitMQ**：Lua 成功后再投递持久化；消费者幂等（按 idempotency_key / 唯一键）。
 
 抢单 Redis：订单维度「可抢库存」为 1，Lua 扣成 0 并写下单骑手；MQ 通知 order-service 迁到 `ACCEPTED`。
@@ -251,8 +281,8 @@ Lua 返回与 HTTP：`1` → 200 成功；`0` → 409 库存不足；`-1` → 20
 - 主算法：GDS A*，`latitudeProperty=lat`, `longitudeProperty=lon`，权重 `cost`
 - 降级：目标缺坐标或启发式不可用 → GDS Dijkstra
 - 不用 Cypher `shortestPath`（只按跳数）
-- 动态拥堵数据源：用骑手上报位置的路段耗时做**演示聚合**（定时任务读最近位置窗口，更新途经边 congestion）；无真实轨迹时种子脚本写入模拟拥堵
-- 本机无 Neo4j：`ssd-common` 的 `GridPathFinder` + OSM 内存图由 **order** 加载，接口仍是 `/api/dispatch/route`。算法同构（A*/Dijkstra），不是高德。
+- 动态拥堵数据源（同一套边权，GDS A\* 只读 `cost`）：① 有 Key 且高德矩形态势成功 → `trafficSource=AMAP`，路名/折线匹配 OSM 边后写 `ROAD.congestion`/`cost`，**不要再叠 PROFILE**。② 高德失败且曾经成功 → 保留上次边权，`LAST_SUCCESS`。③ 无 Key 或高德失败且从未成功 → `trafficSource=PROFILE`，按道路等级+黄浦时段规律写边权（不是 `Random`，不是全图畅通，不是假称高德历史；`seedTraces` 仅高峰补充）。本机 Key：`SSD_AMAP_KEY`（`ssd.amap.key`），与 `GET /map/config` 前端 Key 同一配置位，需开通交通态势；不要把 Key 写进 README
+- 本机无 Neo4j：`ssd-common` 的 `GridPathFinder` + OSM 内存图由 **order** 加载，接口仍是 `/api/dispatch/route`。算法同构（A*/Dijkstra），不是高德。order 启动 ping bolt，通了才走 GDS；不要为了本机演示去新起 18084。本机内存允许时应 `docker compose up -d neo4j`。
 
 ## 7. Canal + ES
 
@@ -289,12 +319,16 @@ Lua 返回与 HTTP：`1` → 200 成功；`0` → 409 库存不足；`-1` → 20
 
 环境变量：
 
-- `SSD_JWT_SECRET`（≥32 字符）
+- `SSD_JWT_SECRET`（≥32 字符）。**生产必须改**，不要把生产密钥写入仓库。
+- `SSD_INTERNAL_TOKEN`（服务间 `X-Internal-Token`）。**生产必须改**，不要把生产密钥写入仓库。
 - `SSD_MODE=auto|live|dry-run`
-- `SSD_AMAP_KEY`（可选；有则高德 JS API。无 Key 用高德公开栅格瓦片，OSM 仅兜底）
+- `SSD_AMAP_KEY`（`ssd.amap.key`。前端有 Key 走 JS API，无 Key 用公开栅格瓦片。order 用同一 Key 拉交通态势写边权，需在控制台开通 Web 服务「交通态势」；无 Key 或态势失败且无上次成功时走 PROFILE 时段画像。不要把 Key 写进 README）
 - `SSD_RIDER_MAX_WORK_HOURS`（默认 8）
 - `SSD_SECKILL_ROTATE_MINUTES`（默认 10；自测可临时改为 1）
 - `SSD_RECOMMEND_MAX_KM`（默认 5；推荐过滤与结算超距共用）
+- `SSD_MERCHANT_ACCEPT_TIMEOUT_MIN`（默认 15）
+
+网关：下游超时/连接失败映射 **502**，错误体 `{ok:false,code:UPSTREAM}`，不做重试。
 
 `docker compose up -d` 起全部中间件。Gateway 对外唯一入口 `http://127.0.0.1:18080`。
 
@@ -311,5 +345,6 @@ Lua 返回与 HTTP：`1` → 200 成功；`0` → 409 库存不足；`-1` → 20
 - ES 消费：旧 version 不覆盖新文档
 
 - 必须有前端 Vitest（`frontend/npm test`）：API 客户端、路由守卫、状态文案、购物车、秒杀轮询、登录页冒烟。禁止把 `P95 250ms`、`200 QPS`、`1.2 万节点` 写进断言或当成环境必须达到的指标。
-- 推荐打分单测：更近的店分更高；有历史时命中品类高于未命中；打烊降权但仍 > 0。外滩 vs 五角场直线距离 > 5km，超半径不 inRange。
-- 券图标与 TTL 单测：无门槛 / 满减 / 会员 / 新客 / 品类 / 折扣；新客 7 天、登录礼 24h、常规 3 天。过期券 quote 不可用。
+- 推荐打分单测：更近的店分更高；有历史时命中品类高于未命中；打烊降权但仍 > 0。差评均分低于好评。外滩 vs 五角场直线距离 > 5km，超半径不 inRange。
+- 券图标与 TTL 单测：无门槛 / 满减 / 会员 / 新客 / 品类 / 折扣；新客 7 天、登录礼 24h、常规 3 天。过期券 quote 不可用。`AMOUNT` 券不抵运费；`FREIGHT` 券抵运费。店铺满减满 X 减 Y。路径缓存 45s 命中；再来一单快照 items 非空。不要把 P95 写进断言。
+- 状态机退款驳回写入 `REFUND_REJECTED` 再 resume；会员运费；高德态势 status→congestion 改边权（成功走 AMAP 不混 PROFILE；失败有上次则 LAST_SUCCESS，从未成功则 PROFILE）；固定 clock 下早高峰主干 congestion 高于凌晨；nearby bbox；工时拒绝接单；Redisson 缺失拒绝临界区。不要把压测数字写进断言。

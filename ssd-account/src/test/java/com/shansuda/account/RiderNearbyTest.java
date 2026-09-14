@@ -28,12 +28,36 @@ class RiderNearbyTest {
     }
 
     @Test
+    void boundingBoxDropsOutsideBeforeHaversine() {
+        double[] box = com.shansuda.common.geo.Geo.boundingBox(31.230, 121.470, 800);
+        assertTrue(com.shansuda.common.geo.Geo.inBoundingBox(31.230, 121.470, box));
+        assertTrue(!com.shansuda.common.geo.Geo.inBoundingBox(31.280, 121.540, box));
+        Rider near = rider(1, 31.230, 121.470, "ONLINE", "IDLE");
+        Rider far = rider(2, 31.280, 121.540, "ONLINE", "IDLE");
+        List<Map<String, Object>> hits = RiderNearby.filterAndSort(
+                List.of(near, far), 31.230, 121.470, 800, "ONLINE", "IDLE");
+        assertEquals(1, hits.size());
+        assertEquals(1L, hits.get(0).get("riderId"));
+    }
+
+    @Test
     void radiusCutsFarRiders() {
         Rider near = rider(1, 31.230, 121.470, "ONLINE", "IDLE");
         Rider far = rider(2, 31.280, 121.540, "ONLINE", "IDLE");
         List<Map<String, Object>> hits = RiderNearby.filterAndSort(
                 List.of(near, far), 31.230, 121.470, 800, "ONLINE", "IDLE");
         assertEquals(1, hits.size());
+        assertEquals(1L, hits.get(0).get("riderId"));
+    }
+
+    @Test
+    void anyStatusKeepsOfflineAndBusy() {
+        Rider near = rider(1, 31.230, 121.470, "ONLINE", "IDLE");
+        Rider busy = rider(3, 31.231, 121.471, "ONLINE", "BUSY");
+        Rider offline = rider(4, 31.229, 121.469, "OFFLINE", "IDLE");
+        List<Map<String, Object>> hits = RiderNearby.filterAndSort(
+                List.of(near, busy, offline), 31.230, 121.470, 5000, null, null);
+        assertEquals(3, hits.size());
         assertEquals(1L, hits.get(0).get("riderId"));
     }
 

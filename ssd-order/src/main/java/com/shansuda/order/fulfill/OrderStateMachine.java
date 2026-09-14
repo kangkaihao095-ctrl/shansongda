@@ -71,6 +71,20 @@ public final class OrderStateMachine {
         return "REFUND_REJECTED";
     }
 
+    /** 驳回已写入 REFUND_REJECTED 后，迁回申请前的 resume_status 继续履约。 */
+    public static String resumeAfterReject(String from, String resumeStatus) {
+        require(from, "REFUND_REJECTED");
+        if (resumeStatus == null || resumeStatus.isBlank()) {
+            return "PAID";
+        }
+        if ("REFUNDING".equals(resumeStatus) || "REFUNDED".equals(resumeStatus)
+                || "REFUND_REJECTED".equals(resumeStatus) || "CANCELLED".equals(resumeStatus)
+                || "CANCELLING".equals(resumeStatus)) {
+            throw BizException.conflict(ErrorCodes.ILLEGAL_STATE, "不可恢复到状态: " + resumeStatus);
+        }
+        return resumeStatus;
+    }
+
     /** 兼容旧口径：未支付取消一步到位；已支付必须先申请退款。 */
     public static String cancel(String from) {
         if ("CREATED".equals(from) || "CANCELLING".equals(from)) {

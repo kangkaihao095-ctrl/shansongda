@@ -32,4 +32,23 @@ public final class Geo {
         }
         return Math.round(km * 10.0) / 10.0;
     }
+
+    /**
+     * 半径对应的 lat/lon 包围盒：{@code [minLat, maxLat, minLon, maxLon]}。
+     * 先用包围盒缩小候选，再用 Haversine 精滤。
+     */
+    public static double[] boundingBox(double lat, double lon, int radiusMeters) {
+        double meters = radiusMeters <= 0 ? 0 : radiusMeters;
+        double dLat = meters / 110_540.0;
+        double cos = Math.cos(Math.toRadians(lat));
+        double dLon = meters / (111_320.0 * Math.max(0.2, Math.abs(cos)));
+        return new double[]{lat - dLat, lat + dLat, lon - dLon, lon + dLon};
+    }
+
+    public static boolean inBoundingBox(double lat, double lon, double[] box) {
+        if (box == null || box.length < 4) {
+            return true;
+        }
+        return lat >= box[0] && lat <= box[1] && lon >= box[2] && lon <= box[3];
+    }
 }
