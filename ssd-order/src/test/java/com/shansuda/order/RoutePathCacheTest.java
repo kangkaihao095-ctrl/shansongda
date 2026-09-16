@@ -27,4 +27,18 @@ class RoutePathCacheTest {
         assertNull(cache.getLeg(2L, 99L, RoutePathCache.R2M));
         assertEquals(1, cache.missCount());
     }
+
+    @Test
+    void r2uAndTwoLegDoNotCollideWithR2m() {
+        RoutePathCache cache = new RoutePathCache();
+        GridPathFinder.Path toShop = new GridPathFinder.Path(List.of(1, 2), 0.8, "ASTAR");
+        GridPathFinder.Path toUser = new GridPathFinder.Path(List.of(2, 9), 1.1, "ASTAR");
+        cache.putLeg(2L, 99L, RoutePathCache.R2M, toShop);
+        cache.putLeg(2L, 99L, RoutePathCache.R2U, toUser);
+        cache.putTwoLeg(2L, 99L, java.util.Map.of("etaMs", 120000L, "algorithm", "ASTAR"));
+        assertEquals(0.8, cache.getLeg(2L, 99L, RoutePathCache.R2M).cost);
+        assertEquals(1.1, cache.getLeg(2L, 99L, RoutePathCache.R2U).cost);
+        assertEquals(120000L, ((Number) cache.getTwoLeg(2L, 99L).get("etaMs")).longValue());
+        assertNull(cache.getLeg(2L, 100L, RoutePathCache.R2U));
+    }
 }

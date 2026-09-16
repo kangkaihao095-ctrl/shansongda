@@ -72,5 +72,8 @@ class MemberFreightAndTimeoutTest {
         assertTrue(far < 0);
         assertTrue(DispatchRank.close(10.0, 10.2));
         assertFalse(DispatchRank.close(10.0, 20.0));
+        assertEquals(0.9 * 0.6 + (4.6 / 5.0) * 0.4, DispatchRank.credit(null, null), 1e-9);
+        int nullCredit = DispatchRank.compare(10.0, null, null, 10.05, 0.99, 4.9);
+        assertTrue(nullCredit > 0);
     }
 }

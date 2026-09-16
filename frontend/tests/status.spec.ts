@@ -6,10 +6,14 @@ import {
   canUserPay,
   etaLabel,
   hallOrder,
+  LIST_ETA_STATUSES,
+  LIVE_TRACK_STATUSES,
+  needsListTrack,
   orderStatusHeadline,
   orderStatusText,
   riderActionText,
   riderStatusText,
+  shopStatusText,
   TIP_GIFTS
 } from '../src/status.js'
 import { APP_NAME, yuan, yuanExact } from '../src/brand.js'
@@ -82,5 +86,22 @@ describe('labels', () => {
   it('keeps four tip gifts and no custom amount', () => {
     expect(TIP_GIFTS.map((g) => g.code)).toEqual(['WATER', 'MILKTEA', 'GIFT', 'CHICKEN'])
     expect(TIP_GIFTS.map((g) => g.cents)).toEqual([200, 500, 1000, 2000])
+  })
+
+  it('labels shop open and closed', () => {
+    expect(shopStatusText('ONLINE')).toBe('营业中')
+    expect(shopStatusText('OFFLINE')).toBe('休息中')
+  })
+})
+
+describe('list eta', () => {
+  it('only tracks in-progress rows without etaMs', () => {
+    expect(LIST_ETA_STATUSES).toEqual(['PAID', 'ACCEPTED', 'ARRIVED', 'DELIVERING'])
+    expect(LIVE_TRACK_STATUSES).not.toContain('PAID')
+    expect(needsListTrack({ status: 'PAID' })).toBe(true)
+    expect(needsListTrack({ status: 'DELIVERING', etaMs: 120000 })).toBe(false)
+    expect(needsListTrack({ status: 'COMPLETED' })).toBe(false)
+    expect(needsListTrack({ status: 'CANCELLED' })).toBe(false)
+    expect(needsListTrack({ status: 'ACCEPTED', etaMs: '' })).toBe(true)
   })
 })

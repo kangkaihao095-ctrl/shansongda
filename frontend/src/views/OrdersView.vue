@@ -10,6 +10,7 @@ import {
   canMerchantAccept,
   canUserPay,
   etaLabel,
+  needsListTrack,
   orderStatusHeadline,
   riderStatusHint,
   snapshotOf
@@ -54,10 +55,7 @@ const tabs = [
 
 async function attachEta(rows) {
   const list = Array.isArray(rows) ? rows : []
-  const need = list.filter((o) => {
-    if (!['PAID', 'ACCEPTED', 'ARRIVED', 'DELIVERING'].includes(o.status)) return false
-    return o.etaMs == null || o.etaMs === ''
-  })
+  const need = list.filter(needsListTrack)
   if (!need.length) return
   await Promise.all(need.map(async (o) => {
     try {

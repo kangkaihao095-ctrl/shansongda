@@ -134,9 +134,17 @@ export function tipGiftOf(code) {
 }
 
 export const LIVE_TRACK_STATUSES = ['ACCEPTED', 'ARRIVED', 'DELIVERING']
+/** 用户/商家订单列表会带 etaMs 的进行中状态；COMPLETED / CANCELLED 不算路。 */
+export const LIST_ETA_STATUSES = ['PAID', 'ACCEPTED', 'ARRIVED', 'DELIVERING']
 export const REFUNDABLE_STATUSES = ['MERCHANT_PENDING', 'PAID', 'ACCEPTED', 'ARRIVED', 'DELIVERING', 'COMPLETED', 'REFUND_REJECTED']
 export const RIDER_ACTIVE_STATUSES = ['ACCEPTED', 'ARRIVED', 'DELIVERING']
 export const DONE_STATUSES = ['COMPLETED', 'CANCELLED', 'REFUNDED']
+
+/** 列表已有 etaMs 时不再打 /track；终态与无 ETA 状态直接跳过。 */
+export function needsListTrack(order) {
+  if (!order || !LIST_ETA_STATUSES.includes(order.status)) return false
+  return order.etaMs == null || order.etaMs === ''
+}
 
 export const RIDER_VIEW = {
   PAID: { title: '待骑手接单', hint: '商家备餐中', action: '立即抢单' },

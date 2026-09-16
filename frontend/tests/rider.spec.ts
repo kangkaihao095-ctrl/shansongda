@@ -4,7 +4,15 @@ import { defineComponent } from 'vue'
 import { afterEach, describe, expect, it } from 'vitest'
 import TabBar from '../src/components/TabBar.vue'
 import { session } from '../src/session.js'
-import { chartLabelStep, formatRemain, loadAutoReport, saveAutoReport, walkLocation } from '../src/riderReport.js'
+import {
+  chartLabelStep,
+  formatRemain,
+  loadAutoReport,
+  loadReportInterval,
+  saveAutoReport,
+  saveReportInterval,
+  walkLocation
+} from '../src/riderReport.js'
 import { canGrabNewOrders } from '../src/riderLive.js'
 
 describe('rider report helpers', () => {
@@ -33,6 +41,15 @@ describe('rider report helpers', () => {
     expect(canGrabNewOrders('OFFLINE', false)).toBe(false)
     expect(canGrabNewOrders('ONLINE', true)).toBe(false)
     expect(canGrabNewOrders('OFFLINE', true)).toBe(false)
+  })
+
+  it('clamps auto-report interval to 3–30 seconds', () => {
+    expect(saveReportInterval(2, 1)).toBe(3)
+    expect(saveReportInterval(2, 90)).toBe(30)
+    expect(loadReportInterval(2, 5)).toBe(5)
+    expect(loadReportInterval(9, 99)).toBe(5)
+    saveReportInterval(9, 12)
+    expect(loadReportInterval(9, 99)).toBe(12)
   })
 })
 

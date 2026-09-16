@@ -60,4 +60,17 @@ describe('merchant board helpers', () => {
     expect(shopIsOpen({ open: false, onlineStatus: 'ONLINE' })).toBe(false)
     expect(shopIsOpen(null)).toBe(true)
   })
+
+  it('includes average pay and refund rate from aggregated stats', () => {
+    const text = reportSummary({
+      range: '7d',
+      series: [{ date: '2026-09-01', orderCount: 2, gmvCents: 4000, completedCount: 2, refundCents: 200 }],
+      avgPayCents: 2000,
+      refundRate: 0.05
+    })
+    expect(text).toContain('客单价')
+    expect(text).toContain(yuan(2000))
+    expect(text).toContain('退款率 5%')
+    expect(text).not.toMatch(/P95|QPS|SLA/)
+  })
 })

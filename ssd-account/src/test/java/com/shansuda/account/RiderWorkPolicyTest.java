@@ -37,6 +37,10 @@ class RiderWorkPolicyTest {
         assertEquals("请先上线", RiderWorkPolicy.grabDenyReason("NEED_ONLINE"));
         assertEquals("WORK_LIMIT", RiderWorkPolicy.grabDenyCode("ONLINE", true, 100, 28800));
         assertEquals("WORK_LIMIT", RiderWorkPolicy.grabDenyCode("OFFLINE", false, 28800, 28800));
+        assertEquals("今日工时已满或已强制下线，不可接单", RiderWorkPolicy.grabDenyReason("WORK_LIMIT"));
+        assertTrue(RiderWorkPolicy.canGrab("ONLINE", false, 100, 28800));
+        assertTrue(RiderWorkPolicy.isOnline("ONLINE"));
+        assertFalse(RiderWorkPolicy.isOnline("OFFLINE"));
     }
 
     @Test
