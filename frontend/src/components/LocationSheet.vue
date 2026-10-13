@@ -1,5 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import BottomSheet from './BottomSheet.vue'
+import Icon from './Icon.vue'
 import { LANDMARKS } from '../coupon'
 import { session } from '../session'
 
@@ -38,40 +40,63 @@ function applyFine() {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="coupon-mask" @click.self="emit('close')">
-      <div class="loc-sheet" @click.stop>
-        <div class="sheet-handle"></div>
-        <div class="row" style="justify-content:space-between">
-          <b>选择收货定位</b>
-          <button class="back-btn" type="button" @click="emit('close')">关闭</button>
-        </div>
-        <p class="muted">推荐按默认地址算距离，超 5 公里的店不会出现在「为你推荐」。</p>
-        <h4>已有地址</h4>
-        <button
-          v-for="a in addresses"
-          :key="a.id"
-          class="loc-item"
-          :class="{ on: a.isDefault }"
-          type="button"
-          @click="pickAddress(a)"
-        >
-          <b>{{ a.detail }}</b>
-          <div class="muted">{{ a.isDefault ? '当前默认' : '设为默认' }} · {{ a.lat?.toFixed?.(4) }} , {{ a.lon?.toFixed?.(4) }}</div>
-        </button>
-        <p v-if="!addresses.length" class="muted">还没有地址，可用下方地标快速设置。</p>
-        <h4>上海地标</h4>
-        <div class="loc-grid">
-          <button v-for="lm in LANDMARKS" :key="lm.key" class="loc-chip" type="button" @click="pickLandmark(lm)">{{ lm.name }}</button>
-        </div>
-        <h4>微调坐标</h4>
-        <div class="row" style="margin-bottom:8px">
-          <input v-model="lat" placeholder="纬度" style="flex:1;border:1px solid var(--line);border-radius:12px;padding:10px" />
-          <input v-model="lon" placeholder="经度" style="flex:1;border:1px solid var(--line);border-radius:12px;padding:10px" />
-        </div>
-        <input v-model="detail" placeholder="地址描述" style="width:100%;border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px" />
-        <button class="btn" style="width:100%" type="button" @click="applyFine">保存定位</button>
-      </div>
+  <BottomSheet :open="open" title="选择收货定位" subtitle="推荐按默认地址计算距离，超 5 公里的店铺不进入推荐" @close="emit('close')">
+    <div class="kicker mb-2">已有地址</div>
+    <div class="stack-2">
+      <button
+        v-for="a in addresses"
+        :key="a.id"
+        class="loc-item"
+        :class="{ on: a.isDefault }"
+        type="button"
+        @click="pickAddress(a)"
+      >
+        <span class="loc-item-ico"><Icon name="pin" :size="18" /></span>
+        <span class="grow">
+          <b class="ellipsis">{{ a.detail }}</b>
+          <small class="num">{{ a.lat?.toFixed?.(4) }}, {{ a.lon?.toFixed?.(4) }}</small>
+        </span>
+        <span v-if="a.isDefault" class="tag">当前</span>
+        <Icon v-else name="chevron" :size="16" class="subtle" />
+      </button>
     </div>
-  </Teleport>
+    <p v-if="!addresses.length" class="muted">还没有地址，可用下方地标快速设置。</p>
+
+    <div class="kicker mt-5 mb-2">上海地标</div>
+    <div class="loc-grid">
+      <button v-for="lm in LANDMARKS" :key="lm.key" class="chip" type="button" @click="pickLandmark(lm)">{{ lm.name }}</button>
+    </div>
+
+    <div class="kicker mt-5 mb-2">微调坐标</div>
+    <div class="loc-coords">
+      <input v-model="lat" class="field num" placeholder="纬度" inputmode="decimal" aria-label="纬度" />
+      <input v-model="lon" class="field num" placeholder="经度" inputmode="decimal" aria-label="经度" />
+    </div>
+    <input v-model="detail" class="field mt-2" placeholder="地址描述" aria-label="地址描述" />
+    <button class="btn btn-block mt-4" type="button" @click="applyFine">保存定位</button>
+  </BottomSheet>
 </template>
+
+<style scoped>
+.loc-item {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 12px 14px;
+  text-align: left;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  transition: box-shadow var(--dur-2) ease, transform var(--dur-1) ease;
+}
+.loc-item:active { transform: scale(0.99); }
+.loc-item.on { box-shadow: 0 0 0 1.5px var(--accent), var(--sh-1); }
+.loc-item b { display: block; font-size: var(--fs-base); font-weight: 650; }
+.loc-item small { display: block; font-size: var(--fs-xs); color: var(--text-3); margin-top: 1px; }
+.loc-item-ico {
+  width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-strong);
+}
+.loc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.loc-grid .chip { padding: 0 8px; }
+.loc-coords { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+</style>

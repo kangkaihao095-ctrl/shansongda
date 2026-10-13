@@ -17,5 +17,5 @@ const text = computed(() => {
 </script>
 
 <template>
-  <span v-if="text" class="role-badge">{{ text }}</span>
+  <span v-if="text" class="tag role-badge"><i class="dot"></i>{{ text }}</span>
 </template>

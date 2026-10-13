@@ -1,0 +1,163 @@
+/* ============================================================
+ * 闪送达 Design Tokens
+ * 品牌色取自 Logo（琥珀 → 烈焰橙），三端通过 data-theme 切换强调色。
+ * ============================================================ */
+:root {
+  /* —— 品牌 —— */
+  --brand-50: #FFF9EB;
+  --brand-100: #FFF0C7;
+  --brand-200: #FFE08F;
+  --brand-300: #FFD057;
+  --brand-400: #FFC31F;
+  --brand-500: #FFB300;
+  --flame-400: #FF8A1F;
+  --flame-500: #FF6A00;
+  --flame-600: #E85500;
+  --grad-brand: linear-gradient(135deg, #FFC81F 0%, #FF9A0A 52%, #FF6A00 100%);
+  --grad-brand-soft: linear-gradient(135deg, #FFF6DA 0%, #FFE9CC 100%);
+
+  /* —— 中性（暖灰，避免发蓝的冷灰） —— */
+  --ink-950: #0C0B0A;
+  --ink-900: #161412;
+  --ink-800: #24211E;
+  --ink-700: #3A3632;
+  --ink-600: #57524C;
+  --ink-500: #7A746C;
+  --ink-400: #A39D94;
+  --ink-300: #CAC5BD;
+  --ink-200: #E6E2DC;
+  --ink-150: #EEEBE6;
+  --ink-100: #F4F2EE;
+  --ink-50: #FAF9F7;
+
+  /* —— 语义色 —— */
+  --success-600: #0F8A4B;
+  --success-500: #16A35A;
+  --success-50: #EAF8F0;
+  --warning-600: #B76E00;
+  --warning-500: #F59E0B;
+  --warning-50: #FFF6E5;
+  --danger-600: #C9302C;
+  --danger-500: #E5484D;
+  --danger-50: #FFF0EF;
+  --info-500: #3B82F6;
+  --info-50: #EEF4FF;
+
+  /* —— 表面 —— */
+  --canvas: #F5F3EF;
+  --surface: #FFFFFF;
+  --surface-2: #FBFAF8;
+  --surface-sunken: #F0EDE8;
+  --line: rgba(22, 20, 18, 0.08);
+  --line-strong: rgba(22, 20, 18, 0.14);
+  --text: var(--ink-900);
+  --text-2: var(--ink-600);
+  --text-3: var(--ink-400);
+  --overlay: rgba(12, 11, 10, 0.48);
+
+  /* —— 角色强调色（默认 = 用户端） —— */
+  --accent: #FF8A00;
+  --accent-strong: #E85500;
+  --accent-soft: #FFF2DC;
+  --accent-soft-2: #FFE6BF;
+  --accent-ink: #1A1208;
+  --accent-grad: var(--grad-brand);
+  --accent-glow: rgba(255, 138, 0, 0.32);
+  --hero-grad: linear-gradient(160deg, #FFD23F 0%, #FFB21A 46%, #FF8A00 100%);
+
+  /* —— 字体 —— */
+  --font-sans: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Hiragino Sans GB",
+    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-num: "SF Pro Display", "DIN Alternate", "Roboto", -apple-system, var(--font-sans);
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 30px;
+  --fs-4xl: 40px;
+  --lh-tight: 1.2;
+  --lh-snug: 1.38;
+  --lh-normal: 1.55;
+
+  /* —— 间距（4pt 网格） —— */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 28px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --gutter: 16px;
+
+  /* —— 圆角 —— */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-2xl: 32px;
+  --r-pill: 999px;
+
+  /* —— 阴影（双层：环境光 + 投影） —— */
+  --sh-1: 0 1px 2px rgba(22, 20, 18, 0.05), 0 0 0 1px rgba(22, 20, 18, 0.03);
+  --sh-2: 0 6px 16px -6px rgba(22, 20, 18, 0.10), 0 2px 4px -2px rgba(22, 20, 18, 0.06), 0 0 0 1px rgba(22, 20, 18, 0.035);
+  --sh-3: 0 18px 40px -12px rgba(22, 20, 18, 0.18), 0 6px 12px -6px rgba(22, 20, 18, 0.08), 0 0 0 1px rgba(22, 20, 18, 0.04);
+  --sh-4: 0 32px 64px -20px rgba(22, 20, 18, 0.30), 0 12px 24px -12px rgba(22, 20, 18, 0.12);
+  --sh-accent: 0 10px 24px -10px var(--accent-glow), 0 2px 6px -2px var(--accent-glow);
+  --sh-inset: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+
+  /* —— 动效 —— */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+  --dur-4: 520ms;
+
+  /* —— 层级 —— */
+  --z-header: 10;
+  --z-tabbar: 20;
+  --z-float: 30;
+  --z-toast: 80;
+  --z-sheet: 100;
+
+  /* —— 布局 —— */
+  --app-max: 440px;
+  --tabbar-h: 64px;
+  --header-h: 56px;
+}
+
+/* 骑手端：深海青 + 薄荷，强调“在线、移动、效率” */
+[data-theme="rider"] {
+  --accent: #0EA5A0;
+  --accent-strong: #0B7F7B;
+  --accent-soft: #E1F6F3;
+  --accent-soft-2: #C6EEE8;
+  --accent-ink: #FFFFFF;
+  --accent-grad: linear-gradient(135deg, #2DD4BF 0%, #0EA5A0 55%, #0B7F7B 100%);
+  --accent-glow: rgba(14, 165, 160, 0.34);
+  --hero-grad: linear-gradient(160deg, #0F3D3E 0%, #0B5E5B 50%, #0EA5A0 100%);
+  --canvas: #F1F5F4;
+  --surface-sunken: #E8EFED;
+}
+
+/* 商家端：墨绿 + 金，强调“经营、稳重、可信” */
+[data-theme="merchant"] {
+  --accent: #128A64;
+  --accent-strong: #0C6B4E;
+  --accent-soft: #E3F4EC;
+  --accent-soft-2: #C9EBDB;
+  --accent-ink: #FFFFFF;
+  --accent-grad: linear-gradient(135deg, #22B07D 0%, #128A64 55%, #0C6B4E 100%);
+  --accent-glow: rgba(18, 138, 100, 0.32);
+  --hero-grad: linear-gradient(160deg, #10241D 0%, #12442F 52%, #128A64 100%);
+  --canvas: #F2F4F1;
+  --surface-sunken: #E9EDE8;
+}

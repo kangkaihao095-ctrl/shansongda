@@ -58,9 +58,23 @@ function routeSegments() {
 }
 
 const hasPath = computed(() => routeSegments().length > 0 || (props.points || []).length > 1)
+
+function friendlyTraffic(hint) {
+  const text = String(hint || '')
+  if (!text) return ''
+  if (text.includes('沿用上次')) return '已按最近路况估算还要多久'
+  if (text.includes('高德')) return '已按当前路况估算还要多久'
+  const period = text.match(/（([^）]+)）/)
+  if (text.includes('画像') || text.includes('ETA')) {
+    return period ? `已按${period[1]}路况估算还要多久` : '已按路况估算还要多久'
+  }
+  if (text.includes('畅通路网')) return '暂时按畅通估算送达时间'
+  return text
+}
+
 const trafficHint = computed(() => {
   if (!hasPath.value) return ''
-  return props.hint || ''
+  return friendlyTraffic(props.hint)
 })
 
 function loadScript(src) {

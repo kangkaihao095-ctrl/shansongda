@@ -29,7 +29,7 @@ const bioText = computed(() => String(props.profile.bio || '')
 </script>
 
 <template>
-  <section class="rider-card" :class="{ compact }">
+  <section class="rider-card" :class="{ compact, bare: hideAvatar }">
     <div class="rider-card-head">
       <div v-if="!hideAvatar" class="avatar">
         <img
@@ -38,22 +38,24 @@ const bioText = computed(() => String(props.profile.bio || '')
           :data-seed="'rider-' + profile.riderId"
           data-fallback-src="/images/rider-cover.jpg"
           @error="onImgError"
-          style="width:72px;height:72px;border-radius:50%;object-fit:cover"
         />
       </div>
-      <div style="flex:1">
-        <div class="row" style="justify-content:space-between">
-          <b>{{ profile.displayName || '闪送达骑手' }}</b>
-          <span class="pill">准时 {{ rateText }}</span>
+      <div class="grow">
+        <div class="row-between">
+          <b class="t-title">{{ profile.displayName || '闪送达骑手' }}</b>
+          <span class="tag tag-success">准时 {{ rateText }}</span>
         </div>
-        <div class="muted">{{ years }}</div>
-        <div v-if="!compact" class="muted" style="margin-top:4px">累计打赏 {{ yuan(profile.tipCentsTotal) }}</div>
+        <div class="muted mt-1">{{ years }}</div>
       </div>
     </div>
+    <div class="rider-stats-row">
+      <div><small>准时率</small><b>{{ rateText }}</b></div>
+      <div><small>累计打赏</small><b>{{ yuan(profile.tipCentsTotal) }}</b></div>
+      <div><small>勋章</small><b>{{ (profile.badges || []).filter((b) => b.earned).length }}/{{ (profile.badges || []).length }}</b></div>
+    </div>
     <p v-if="bioText" class="rider-bio">{{ bioText }}</p>
-    <p v-if="!compact && profile.onTimeRateNote" class="muted" style="font-size:12px">{{ profile.onTimeRateNote }}</p>
-    <div v-if="compact" class="muted">累计打赏 {{ yuan(profile.tipCentsTotal) }}</div>
-    <div class="badge-wall">
+    <p v-if="!compact && profile.onTimeRateNote" class="muted mt-2">{{ profile.onTimeRateNote }}</p>
+    <div v-if="(profile.badges || []).length" class="badge-wall">
       <span
         v-for="b in (profile.badges || [])"
         :key="b.code"

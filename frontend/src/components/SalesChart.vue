@@ -73,8 +73,10 @@ function showTip(p, e) {
         :key="p.date"
         :cx="p.x"
         :cy="p.y"
-        r="5"
-        fill="currentColor"
+        r="4"
+        fill="var(--surface)"
+        stroke="currentColor"
+        stroke-width="2.5"
         class="chart-dot"
         @mouseenter="showTip(p, $event)"
         @mousemove="showTip(p, $event)"
@@ -103,19 +105,11 @@ function showTip(p, e) {
 
 <style scoped>
 .chart-wrap { position: relative; }
-.chart { width: 100%; height: 176px; color: #FF6A00; }
+.chart { width: 100%; height: 176px; color: var(--accent); overflow: visible; }
 .chart-line { stroke-dasharray: 720; stroke-dashoffset: 720; animation: draw-line .55s ease forwards; }
 .chart-area { opacity: 0; animation: fade-area .45s .1s ease forwards; }
-.chart-dot { cursor: pointer; }
-.chart-tip {
-  position: absolute; transform: translate(-50%, -120%);
-  background: #1A1208; color: #fff; border-radius: 10px; padding: 6px 10px;
-  font-size: 12px; pointer-events: none; white-space: nowrap; z-index: 3;
-}
+.chart-dot { cursor: pointer; transition: r var(--dur-2) ease; }
+.chart-dot:hover { r: 6; }
 @keyframes draw-line { to { stroke-dashoffset: 0; } }
 @keyframes fade-area { to { opacity: 1; } }
-:global(.theme-rider) .chart { color: #1AA7B8; }
-:global(.theme-merchant) .chart { color: #0F6E64; }
-:global([data-role="MERCHANT"]) .chart { color: #0F6E64; }
-:global([data-role="MERCHANT"]) .chart-tip { background: #0F3D38; }
 </style>

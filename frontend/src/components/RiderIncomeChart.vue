@@ -90,6 +90,9 @@ function axis(p, i) {
 
 <style scoped>
 .chart-wrap { position: relative; }
-.chart { width: 100%; height: 150px; color: #1AA7B8; }
+.chart { width: 100%; height: 150px; color: var(--accent); }
+.income-bar { fill: currentColor; transform-origin: center bottom; transform-box: fill-box; animation: bar-rise .55s var(--ease-out) both; cursor: pointer; transition: opacity var(--dur-2) ease; }
+.income-bar:hover { opacity: .8; }
+@keyframes bar-rise { from { transform: scaleY(0.05); } to { transform: none; } }
 .chart.compact { height: 92px; }
 </style>

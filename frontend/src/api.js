@@ -9,6 +9,10 @@ export function setToken(value) {
   else localStorage.removeItem(KEY)
 }
 
+/**
+ * @param {string} path
+ * @param {{ method?: string, body?: unknown }} [options]
+ */
 export async function api(path, { method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   const t = token()

@@ -17,7 +17,7 @@ describe('onImgError', () => {
     const el = {
       dataset: { seed: 'ssd-sku-1001', category: 'pharma' },
       src: 'https://loremflickr.com/800/600/pharmacy?lock=1',
-      getAttribute(name) {
+      getAttribute(name: string) {
         return name === 'src' ? this.src : undefined
       }
     }
@@ -34,7 +34,7 @@ describe('onImgError', () => {
     const el = {
       dataset: { fallbackSrc: RIDER_COVER },
       src: '/api/avatars/broken.jpg',
-      getAttribute(name) {
+      getAttribute(name: string) {
         return name === 'src' ? this.src : undefined
       }
     }

@@ -3,11 +3,14 @@ import { api } from './api'
 
 const KEY = 'ssd.cart'
 
+/**
+ * @typedef {{ id?: number, skuId?: number, name?: string, priceCents?: number, qty: number, imageUrl?: string }} CartItem
+ */
 export const cart = reactive({
-  merchantId: null,
+  merchantId: /** @type {number | null} */ (null),
   shopName: '',
   coverUrl: '',
-  items: []
+  items: /** @type {CartItem[]} */ ([])
 })
 
 hydrate()

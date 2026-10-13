@@ -2,11 +2,25 @@ import { reactive } from 'vue'
 import { api, setToken, token } from './api'
 import { mergeServerCart } from './cart'
 
+/**
+ * @typedef {{
+ *   userId?: number,
+ *   phone?: string,
+ *   role?: string,
+ *   displayName?: string,
+ *   avatarUrl?: string | null,
+ *   addresses?: Array<Record<string, unknown>>,
+ *   merchant?: Record<string, any> | null,
+ *   rider?: Record<string, any> | null,
+ *   riderProfile?: Record<string, any> | null,
+ *   member?: any
+ * }} SessionUser
+ */
 export const session = reactive({
-  me: null,
+  me: /** @type {SessionUser | null} */ (null),
   toast: '',
   toastKind: 'ok',
-  pendingLoginGift: null
+  pendingLoginGift: /** @type {any} */ (null)
 })
 
 export function toast(message, kind = 'ok') {

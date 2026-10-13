@@ -2,18 +2,22 @@ package com.shansuda.order.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.annotation.Order;
+import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.core.Ordered;
+import org.springframework.core.PriorityOrdered;
 import org.springframework.stereotype.Component;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
 
+/**
+ * 必须在 ShardingSphere 数据源初始化之前补列。
+ * 否则进程启动时已缓存旧表结构，Hibernate 查询 cancel_reason 等新列会被判定为未知列并 500。
+ */
 @Component
-@Order(1)
-public class OrderSchemaPatcher implements ApplicationRunner {
+public class OrderSchemaPatcher implements BeanFactoryPostProcessor, PriorityOrdered {
 
     private static final Logger log = LoggerFactory.getLogger(OrderSchemaPatcher.class);
     private static final String[] COLUMNS = {
@@ -31,7 +35,16 @@ public class OrderSchemaPatcher implements ApplicationRunner {
     };
 
     @Override
-    public void run(ApplicationArguments args) {
+    public int getOrder() {
+        return Ordered.HIGHEST_PRECEDENCE;
+    }
+
+    @Override
+    public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
+        patch();
+    }
+
+    private void patch() {
         String user = "shansuda";
         String pass = "shansuda";
         String extra = "useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci";

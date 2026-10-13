@@ -1,5 +1,7 @@
 <script setup>
-import { couponFaceLabel, couponIcon, couponNo, couponRules, couponThreshold, couponTone, expireText } from '../coupon'
+import CouponFace from './CouponFace.vue'
+import Icon from './Icon.vue'
+import { couponNo, couponRules, expireText } from '../coupon'
 
 defineProps({
   open: { type: Boolean, default: false },
@@ -9,32 +11,28 @@ const emit = defineEmits(['close'])
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open && coupon" class="coupon-mask" @click.self="emit('close')">
-      <div class="coupon-sheet" @click.stop>
-        <button class="coupon-x" type="button" @click="emit('close')">×</button>
-        <div class="sheet-handle"></div>
-        <div class="coupon-sheet-title">优惠券详情</div>
-        <article class="coupon-face" :class="couponTone(coupon)" style="margin:8px 0 14px">
-          <div class="coupon-face-inner">
-            <img class="coupon-ico" :src="couponIcon(coupon)" alt="" />
-            <div class="coupon-amt"><b>{{ couponFaceLabel(coupon) }}</b></div>
-            <div class="coupon-meta">
-              <div class="coupon-name">{{ coupon.name }}</div>
-              <div>{{ couponThreshold(coupon) }}</div>
+  <Teleport to="#device-portal" defer>
+    <transition name="sheet">
+      <div v-if="open && coupon" class="sheet-mask coupon-mask" @click.self="emit('close')">
+        <div class="coupon-sheet" role="dialog" aria-modal="true" aria-label="优惠券详情">
+          <div class="sheet-handle" aria-hidden="true"></div>
+          <button class="coupon-x" type="button" aria-label="关闭" @click="emit('close')">
+            <Icon name="close" :size="16" :stroke="2.4" />
+          </button>
+          <div class="coupon-sheet-title">优惠券详情</div>
+          <div class="coupon-sheet-sub">{{ coupon.name }}</div>
+          <CouponFace :coupon="coupon" mode="detail" />
+          <div class="coupon-detail-block">
+            <div class="coupon-rule">
+              <div v-if="expireText(coupon.endAt)">{{ expireText(coupon.endAt) }}</div>
+              <div v-if="couponNo(coupon)">券号 {{ couponNo(coupon) }}</div>
+              <div class="coupon-freight">{{ coupon.coversFreight === true ? '可抵运费' : '不抵扣运费（只抵商品）' }}</div>
+              <div v-for="line in couponRules(coupon)" :key="line">· {{ line }}</div>
             </div>
           </div>
-        </article>
-        <div class="coupon-detail-block">
-          <div class="coupon-rule">
-            <div v-if="expireText(coupon.endAt)">{{ expireText(coupon.endAt) }}</div>
-            <div v-if="couponNo(coupon)">券号 {{ couponNo(coupon) }}</div>
-            <div class="coupon-freight">{{ coupon.coversFreight === true ? '可抵运费' : '不抵扣运费（只抵商品）' }}</div>
-            <div v-for="line in couponRules(coupon)" :key="line">{{ line }}</div>
-          </div>
+          <button class="btn btn-lg btn-block mt-5" type="button" @click="emit('close')">知道了</button>
         </div>
-        <button class="btn" style="width:100%;margin-top:16px" type="button" @click="emit('close')">知道了</button>
       </div>
-    </div>
+    </transition>
   </Teleport>
 </template>

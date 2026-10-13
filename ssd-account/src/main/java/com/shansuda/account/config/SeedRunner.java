@@ -335,7 +335,8 @@ public class SeedRunner implements ApplicationRunner {
 
     private void renameIfDemo(AppUser user, String name) {
         String current = user.getDisplayName() == null ? "" : user.getDisplayName();
-        if (current.isBlank() || current.contains("演示") || current.contains("闪速达")
+        boolean broken = current.codePoints().noneMatch(cp -> Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN);
+        if (current.isBlank() || broken || current.contains("演示") || current.contains("闪速达")
                 || "闪速鲜生店长".equals(current)
                 || current.equals(user.getPhone())) {
             user.setDisplayName(name);

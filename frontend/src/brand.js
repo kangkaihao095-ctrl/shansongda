@@ -22,3 +22,13 @@ export function initials(name) {
   const text = (name || '闪').trim()
   return text.slice(0, 1)
 }
+
+export function freightLabel(name) {
+  const raw = String(name || '')
+  if (!raw) return ''
+  const bits = []
+  if (/PeakFreight/i.test(raw)) bits.push('高峰')
+  else if (/DistanceFreight/i.test(raw)) bits.push('按距离')
+  if (/MemberFreight/i.test(raw)) bits.push('会员优惠')
+  return bits.join(' · ')
+}

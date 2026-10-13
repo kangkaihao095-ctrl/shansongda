@@ -25,6 +25,7 @@ export function useOrderQuery(getExtra) {
   const hasPrev = ref(false)
   const loading = ref(false)
   const loaded = ref(false)
+  const error = ref('')
   let debounceTimer
 
   function extra() {
@@ -48,7 +49,9 @@ export function useOrderQuery(getExtra) {
       total.value = data.total ?? 0
       hasNext.value = !!data.hasNext
       hasPrev.value = !!data.hasPrev
+      error.value = ''
     } catch (e) {
+      error.value = e.message || '加载失败'
       toast(e.message, 'err')
     } finally {
       loading.value = false
@@ -96,7 +99,7 @@ export function useOrderQuery(getExtra) {
   const empty = computed(() => loaded.value && !loading.value && items.value.length === 0)
 
   return {
-    q, size, page, items, total, pages, hasNext, hasPrev, loading, loaded, empty,
+    q, size, page, items, total, pages, hasNext, hasPrev, loading, loaded, error, empty,
     load, setSize, setPage, prev, next, resetAndLoad
   }
 }

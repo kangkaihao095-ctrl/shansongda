@@ -19,7 +19,7 @@ export function matchSeckillOrder(items, { orderId, idempotencyKey, skuId, activ
   return null
 }
 
-export function seckillButtonLabel({ busy, soldOut, grabbed, remain }) {
+export function seckillButtonLabel({ busy = false, soldOut = false, grabbed = false, remain = null } = {}) {
   if (busy) return '抢购中…'
   if (grabbed) return remain === 0 ? '已抢到' : '去支付'
   if (soldOut) return '已售罄'

@@ -1,27 +1,40 @@
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { yuan } from '../brand'
 import { addSku, cart, goodsCents, itemCount, setQty, setShop } from '../cart'
 import { api } from '../api'
 import { imgSrc, onImgError } from '../img'
-import { goBack, toast } from '../session'
+import { categoryName } from '../catalog'
+import { toast } from '../session'
 import MemberBadge from '../components/MemberBadge.vue'
 import StarPicker from '../components/StarPicker.vue'
+import PageHeader from '../components/PageHeader.vue'
+import SegTabs from '../components/SegTabs.vue'
+import BottomSheet from '../components/BottomSheet.vue'
+import EmptyState from '../components/EmptyState.vue'
+import Icon from '../components/Icon.vue'
 
 const route = useRoute()
 const router = useRouter()
 const shop = ref({ items: [] })
+const loaded = ref(false)
+const loadError = ref('')
 const tab = ref('menu')
 const reviews = ref([])
 const reviewPage = ref(1)
 const reviewHasNext = ref(false)
+const reviewsLoading = ref(false)
 const drawer = ref(null)
-const groupEl = ref(null)
 const activeGroup = ref('')
+const bodyEl = ref(null)
+const scrolled = ref(false)
+const bump = ref(false)
+let spy
 
 const closed = computed(() => shop.value.open === false || shop.value.onlineStatus === 'OFFLINE')
 const outOfRange = computed(() => shop.value.inRange === false)
+const cat = computed(() => shop.value.category || 'food')
 const groups = computed(() => {
   const map = new Map()
   for (const sku of shop.value.items || []) {
@@ -31,13 +44,21 @@ const groups = computed(() => {
   }
   return [...map.entries()]
 })
+const currentGroup = computed(() => activeGroup.value || groups.value[0]?.[0])
+const tabOptions = computed(() => [
+  { key: 'menu', label: '点菜' },
+  { key: 'reviews', label: `评价${shop.value.ratingCount ? ' ' + shop.value.ratingCount : ''}` }
+])
 
-onMounted(async () => {
+async function load() {
+  loadError.value = ''
   try {
     shop.value = (await api('/api/merchants/' + route.params.id)).data
     setShop(shop.value)
+    loaded.value = true
+    await nextTick()
+    setupSpy()
     if (route.query.skuId) {
-      await nextTick()
       document.getElementById('sku-' + route.query.skuId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
     if (route.query.reviewId) {
@@ -45,11 +66,31 @@ onMounted(async () => {
       await focusReview(route.query.reviewId)
     }
   } catch (e) {
+    loadError.value = e.message || '店铺加载失败'
+    loaded.value = true
     toast(e.message, 'err')
   }
-})
+}
+
+onMounted(load)
+onUnmounted(() => spy?.disconnect())
+
+function setupSpy() {
+  spy?.disconnect()
+  if (typeof IntersectionObserver === 'undefined' || !bodyEl.value) return
+  spy = new IntersectionObserver((entries) => {
+    const hit = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0]
+    if (hit) activeGroup.value = hit.target.dataset.group
+  }, { root: bodyEl.value, rootMargin: '-120px 0px -65% 0px' })
+  bodyEl.value.querySelectorAll('[data-group]').forEach((el) => spy.observe(el))
+}
+
+function onScroll(e) {
+  scrolled.value = e.target.scrollTop > 140
+}
 
 async function loadReviews(reset) {
+  reviewsLoading.value = true
   try {
     const p = reset ? 1 : reviewPage.value
     const res = await api(`/api/merchants/${route.params.id}/reviews?page=${p}&size=10`)
@@ -59,6 +100,8 @@ async function loadReviews(reset) {
     reviewPage.value = p + 1
   } catch (e) {
     toast(e.message, 'err')
+  } finally {
+    reviewsLoading.value = false
   }
 }
 
@@ -75,9 +118,13 @@ async function focusReview(reviewId) {
   document.getElementById('review-' + target)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-function switchTab(next) {
+async function switchTab(next) {
   tab.value = next
   if (next === 'reviews' && !reviews.value.length) loadReviews(true)
+  if (next === 'menu') {
+    await nextTick()
+    setupSpy()
+  }
 }
 
 function add(sku) {
@@ -86,6 +133,8 @@ function add(sku) {
   if (sku.status === 'OFFLINE') return toast('商品已下架', 'err')
   setShop(shop.value)
   addSku(sku)
+  bump.value = false
+  requestAnimationFrame(() => { bump.value = true })
   toast('已加入购物车')
 }
 
@@ -109,8 +158,7 @@ async function toggleLike(row) {
 
 function scrollGroup(name) {
   activeGroup.value = name
-  const el = document.getElementById('g-' + name)
-  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  document.getElementById('g-' + name)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function timeText(v) {
@@ -119,122 +167,339 @@ function timeText(v) {
   if (Number.isNaN(d.getTime())) return ''
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
+
+function disabledLabel(sku) {
+  if (sku.status === 'OFFLINE') return '已下架'
+  if (closed.value) return '休息中'
+  if (outOfRange.value) return '超范围'
+  return ''
+}
 </script>
 
 <template>
-  <div class="phone page">
-    <header class="frost pad row">
-      <button class="back-btn" type="button" @click="goBack(router, '/home')">← 返回</button>
-      <span class="pill" :class="{ off: closed }">{{ closed ? '休息中' : '营业中' }}</span>
-    </header>
-    <div class="phone-body no-tab">
-      <div class="shop-hero">
-        <img
-          class="hero-cover"
-          :class="{ 'is-off': closed }"
-          :src="imgSrc(shop.coverUrl, shop.category || 'food', 'shop-' + shop.id, 'shop')"
-          alt=""
-          :data-seed="'shop-' + shop.id"
-          :data-category="shop.category || 'food'"
-          @error="onImgError"
-        />
-        <div class="shop-info">
-          <h1>{{ shop.shopName || '店铺' }}</h1>
-          <div class="shop-metrics">
-            <span class="score">{{ shop.rating || 4.8 }} 分</span>
-            <span>{{ shop.ratingCount || 0 }} 评</span>
-            <span>{{ shop.promo || '配送费按下单结算' }}</span>
-          </div>
-          <div v-if="shop.address" class="muted" style="margin-top:6px">{{ shop.address }}</div>
-          <div v-if="shop.intro" class="muted" style="margin-top:4px">{{ shop.intro }}</div>
+  <div class="phone page shop">
+    <PageHeader overlay :solid="scrolled" back="/home" :title="scrolled ? shop.shopName : ''">
+      <template #right>
+        <span class="tag" :class="closed ? 'tag-neutral' : 'tag-success'"><i class="dot"></i>{{ closed ? '休息中' : '营业中' }}</span>
+      </template>
+    </PageHeader>
+
+    <div ref="bodyEl" class="phone-body" :class="itemCount() && !closed && !outOfRange ? 'has-bar' : 'no-tab'" @scroll.passive="onScroll">
+      <EmptyState v-if="loadError" kind="error" title="店铺加载失败" :hint="loadError" class="shop-error">
+        <button class="btn btn-sm" type="button" @click="load"><Icon name="refresh" :size="16" />重试</button>
+      </EmptyState>
+
+      <template v-else>
+        <div class="shop-hero">
+          <img
+            v-if="loaded"
+            class="shop-cover"
+            :class="{ 'is-off': closed }"
+            :src="imgSrc(shop.coverUrl, cat, 'shop-' + shop.id, 'shop')"
+            alt=""
+            :data-seed="'shop-' + shop.id"
+            :data-category="cat"
+            @error="onImgError"
+          />
+          <div v-else class="shop-cover skel" style="border-radius:0"></div>
         </div>
-      </div>
-      <div class="pad" style="padding-top:12px">
-        <div v-if="closed" class="card" style="margin-bottom:12px;color:var(--danger)">商家休息中，暂不可加购和下单</div>
-        <div v-else-if="outOfRange" class="card" style="margin-bottom:12px;color:var(--danger)">超配送范围不可下单（{{ shop.distanceKm }} km / {{ shop.maxKm || 5 }} km）</div>
+
+        <section class="shop-info">
+          <template v-if="loaded">
+            <div class="si-head">
+              <h1 class="t-h2">{{ shop.shopName || '店铺' }}</h1>
+              <span class="si-score"><Icon name="star" :size="15" :stroke="0" class="si-star" />{{ Number(shop.rating || 4.8).toFixed(1) }}</span>
+            </div>
+            <div class="si-meta">
+              <span>{{ categoryName(cat) }}</span><i></i>
+              <span>{{ shop.ratingCount || 0 }} 条评价</span>
+              <template v-if="shop.distanceKm != null"><i></i><span>{{ shop.distanceKm }} km</span></template>
+              <template v-if="shop.completedCount"><i></i><span>月售 {{ shop.completedCount }}</span></template>
+            </div>
+            <div class="si-tags">
+              <span v-if="shop.promo" class="tag">{{ shop.promo }}</span>
+              <span class="tag tag-neutral">配送费按下单结算</span>
+            </div>
+            <p v-if="shop.address" class="si-line"><Icon name="pin" :size="14" />{{ shop.address }}</p>
+            <p v-if="shop.intro" class="si-line"><Icon name="info" :size="14" />{{ shop.intro }}</p>
+          </template>
+          <template v-else>
+            <div class="skel skel-line" style="width:60%;height:20px"></div>
+            <div class="skel skel-line mt-3" style="width:80%"></div>
+            <div class="skel skel-line mt-2" style="width:40%"></div>
+          </template>
+        </section>
+
+        <div class="pad">
+          <div v-if="closed" class="notice danger"><Icon name="moon" :size="16" />商家休息中，暂不可加购和下单</div>
+          <div v-else-if="outOfRange" class="notice danger"><Icon name="info" :size="16" />超配送范围不可下单（{{ shop.distanceKm }} km / {{ shop.maxKm || 5 }} km）</div>
+        </div>
+
         <div class="shop-tabs">
-          <button type="button" :class="{ on: tab === 'menu' }" @click="switchTab('menu')">商品</button>
-          <button type="button" :class="{ on: tab === 'reviews' }" @click="switchTab('reviews')">评价</button>
+          <SegTabs :model-value="tab" :options="tabOptions" label="店铺内容" @change="switchTab" />
         </div>
-      </div>
-      <div v-if="tab === 'menu'" class="menu-board">
-        <nav ref="groupEl" class="menu-cats">
-          <button v-for="[name] in groups" :key="name" type="button" :class="{ on: (activeGroup || groups[0]?.[0]) === name }" @click="scrollGroup(name)">{{ name }}</button>
-        </nav>
-        <div class="menu-pane">
-          <section v-for="[name, skus] in groups" :id="'g-' + name" :key="name" style="margin-bottom:8px">
-            <h3 class="section-title" style="font-size:15px;margin:8px 4px">{{ name }}</h3>
-            <article v-for="sku in skus" :id="'sku-' + sku.id" :key="sku.id" class="card sku-row" :class="{ highlight: String(route.query.skuId) === String(sku.id) }" @click="openSku(sku)">
-              <img :src="imgSrc(sku.imageUrl, shop.category || 'food', 'sku-' + sku.id, 'dish')" :alt="sku.name" :data-seed="'sku-' + sku.id" :data-category="shop.category || 'food'" @error="onImgError" style="width:72px;height:72px;border-radius:14px;object-fit:cover" />
-              <div style="flex:1">
-                <b>{{ sku.name }}</b>
-                <div class="muted">{{ sku.description || sku.spec }} · 月售 {{ sku.monthSales || 0 }}</div>
-                <div class="row" style="justify-content:space-between;margin-top:6px">
-                  <span class="num">{{ yuan(sku.priceCents) }} <span class="muted" style="text-decoration:line-through">{{ yuan(sku.originPriceCents) }}</span></span>
-                  <div class="row" @click.stop>
-                    <button v-if="qtyOf(sku.id) && !closed && sku.status !== 'OFFLINE'" class="btn ghost" @click="setQty(sku.id, qtyOf(sku.id) - 1)">-</button>
-                    <span v-if="qtyOf(sku.id)">{{ qtyOf(sku.id) }}</span>
-                    <button class="btn sku-plus" :disabled="closed || outOfRange || sku.status === 'OFFLINE'" @click="add(sku)">
-                      {{ sku.status === 'OFFLINE' ? '已下架' : (closed ? '休息中' : (outOfRange ? '超范围' : '+')) }}
-                    </button>
+
+        <div v-if="tab === 'menu'" class="menu-board">
+          <nav class="menu-cats" aria-label="商品分类">
+            <button
+              v-for="[name, skus] in groups"
+              :key="name"
+              type="button"
+              :class="{ on: currentGroup === name }"
+              :aria-current="currentGroup === name ? 'true' : undefined"
+              @click="scrollGroup(name)"
+            >
+              <span>{{ name }}</span>
+              <small>{{ skus.length }}</small>
+            </button>
+          </nav>
+          <div class="menu-pane">
+            <div v-if="!loaded">
+              <div v-for="n in 4" :key="n" class="sku-skel">
+                <div class="skel" style="width:84px;height:84px"></div>
+                <div class="grow"><div class="skel skel-line" style="width:70%"></div><div class="skel skel-line mt-2" style="width:45%"></div></div>
+              </div>
+            </div>
+            <section v-for="[name, skus] in groups" :id="'g-' + name" :key="name" class="menu-group" :data-group="name">
+              <h3 class="menu-group-title">{{ name }}</h3>
+              <article
+                v-for="sku in skus"
+                :id="'sku-' + sku.id"
+                :key="sku.id"
+                class="sku"
+                :class="{ highlight: String(route.query.skuId) === String(sku.id), off: sku.status === 'OFFLINE' }"
+                @click="openSku(sku)"
+              >
+                <div class="sku-img">
+                  <img :src="imgSrc(sku.imageUrl, cat, 'sku-' + sku.id, 'dish')" :alt="sku.name" :data-seed="'sku-' + sku.id" :data-category="cat" loading="lazy" @error="onImgError" />
+                </div>
+                <div class="sku-body">
+                  <b class="sku-name">{{ sku.name }}</b>
+                  <p class="sku-desc clamp-2">{{ sku.description || sku.spec }}</p>
+                  <span class="sku-sales">月售 {{ sku.monthSales || 0 }}</span>
+                  <div class="sku-foot">
+                    <span class="sku-price">
+                      <b class="num">{{ yuan(sku.priceCents) }}</b>
+                      <s v-if="sku.originPriceCents > sku.priceCents" class="num">{{ yuan(sku.originPriceCents) }}</s>
+                    </span>
+                    <div class="qty" @click.stop>
+                      <span v-if="disabledLabel(sku)" class="tag tag-neutral">{{ disabledLabel(sku) }}</span>
+                      <template v-else>
+                        <transition name="qty">
+                          <button v-if="qtyOf(sku.id)" class="qty-minus" type="button" :aria-label="'减少 ' + sku.name" @click="setQty(sku.id, qtyOf(sku.id) - 1)">
+                            <Icon name="minus" :size="14" :stroke="2.6" />
+                          </button>
+                        </transition>
+                        <span v-if="qtyOf(sku.id)" class="qty-num">{{ qtyOf(sku.id) }}</span>
+                        <button class="qty-plus" type="button" :aria-label="'加入 ' + sku.name" @click="add(sku)">
+                          <Icon name="plus" :size="14" :stroke="2.6" />
+                        </button>
+                      </template>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </article>
-          </section>
+              </article>
+            </section>
+            <EmptyState v-if="loaded && !groups.length" bare title="店铺暂未上架商品" hint="稍后再来看看吧" />
+          </div>
         </div>
-      </div>
-      <div v-else class="pad">
+
+        <div v-else class="pad reviews">
           <article
             v-for="r in reviews"
             :id="'review-' + r.id"
             :key="r.id"
-            class="card"
+            v-reveal
+            class="card review"
             :class="{ highlight: String(route.query.reviewId) === String(r.id) }"
-            style="margin-bottom:10px"
           >
-            <div class="row" style="justify-content:space-between">
-              <div class="row" style="gap:8px">
-                <b>{{ r.anonymousName }}</b>
-                <MemberBadge :member="r.member" compact />
+            <div class="rv-head">
+              <span class="avatar rv-ava">{{ (r.anonymousName || '匿').slice(0, 1) }}</span>
+              <div class="grow">
+                <div class="row">
+                  <b>{{ r.anonymousName }}</b>
+                  <MemberBadge :member="r.member" compact />
+                </div>
+                <div class="row mt-1">
+                  <StarPicker :model-value="r.score || 0" size="sm" readonly />
+                  <span class="muted">{{ timeText(r.createdAt) }}</span>
+                </div>
               </div>
-              <StarPicker :model-value="r.score || 0" size="sm" readonly />
             </div>
-            <div class="muted" style="margin:6px 0">{{ timeText(r.createdAt) }} · {{ r.skuNames || '本店商品' }}</div>
-            <div v-if="r.content">{{ r.content }}</div>
-            <div v-if="r.photoUrls?.length" class="review-photos" style="margin-top:8px">
-              <img v-for="url in r.photoUrls" :key="url" :src="url" alt="" class="review-thumb" @error="onImgError" />
+            <p v-if="r.content" class="rv-content">{{ r.content }}</p>
+            <div v-if="r.photoUrls?.length" class="rv-photos">
+              <img v-for="url in r.photoUrls" :key="url" :src="url" alt="评价配图" loading="lazy" @error="onImgError" />
             </div>
-            <button class="like-btn" :class="{ on: r.likedByMe }" type="button" @click="toggleLike(r)">
-              {{ r.likedByMe ? '已赞' : '点赞' }} {{ r.likeCount || 0 }}
-            </button>
+            <div class="rv-foot">
+              <span class="muted ellipsis">{{ r.skuNames || '本店商品' }}</span>
+              <button class="like" :class="{ on: r.likedByMe }" type="button" :aria-pressed="!!r.likedByMe" @click="toggleLike(r)">
+                <Icon name="thumb" :size="15" />{{ r.likeCount || 0 }}
+              </button>
+            </div>
           </article>
-          <button v-if="reviewHasNext" class="btn ghost" style="width:100%" @click="loadReviews(false)">加载更多评价</button>
-          <p v-if="!reviews.length" class="muted">暂无评价</p>
-      </div>
-    </div>
-    <div v-if="drawer" class="sku-mask" @click="drawer = null">
-      <div class="sku-drawer" @click.stop>
-        <img :src="imgSrc(drawer.imageUrl, shop.category || 'food', 'sku-' + drawer.id, 'dish')" :alt="drawer.name" :data-seed="'sku-' + drawer.id" :data-category="shop.category || 'food'" @error="onImgError" />
-        <div class="pad">
-          <div class="row" style="justify-content:space-between">
-            <b style="font-size:18px">{{ drawer.name }}</b>
-            <button class="back-btn" type="button" @click="drawer = null">关闭</button>
-          </div>
-          <div class="num" style="margin:8px 0">{{ yuan(drawer.priceCents) }}</div>
-          <div class="muted">月售 {{ drawer.monthSales || 0 }} · {{ drawer.spec }}</div>
-          <p>{{ drawer.description }}</p>
-          <p class="muted">{{ drawer.detail }}</p>
-          <button class="btn" style="width:100%" :disabled="closed || outOfRange || drawer.status === 'OFFLINE'" @click="add(drawer); drawer = null">
-            {{ outOfRange ? '超配送范围不可下单' : '加入购物车' }}
-          </button>
+          <div v-if="reviewsLoading" class="list-status"><span class="spinner"></span>加载中…</div>
+          <button v-if="reviewHasNext && !reviewsLoading" class="btn ghost btn-block" type="button" @click="loadReviews(false)">加载更多评价</button>
+          <EmptyState v-if="!reviews.length && !reviewsLoading" title="还没有评价" hint="下单后来做第一个评价的人吧" />
         </div>
+      </template>
+    </div>
+
+    <BottomSheet :open="!!drawer" @close="drawer = null">
+      <template v-if="drawer">
+        <div class="drawer-img">
+          <img :src="imgSrc(drawer.imageUrl, cat, 'sku-' + drawer.id, 'dish')" :alt="drawer.name" :data-seed="'sku-' + drawer.id" :data-category="cat" @error="onImgError" />
+        </div>
+        <h3 class="t-h2 mt-4">{{ drawer.name }}</h3>
+        <div class="row mt-2">
+          <b class="num drawer-price">{{ yuan(drawer.priceCents) }}</b>
+          <s v-if="drawer.originPriceCents > drawer.priceCents" class="num strike">{{ yuan(drawer.originPriceCents) }}</s>
+          <span class="muted">月售 {{ drawer.monthSales || 0 }}<template v-if="drawer.spec"> · {{ drawer.spec }}</template></span>
+        </div>
+        <p v-if="drawer.description" class="drawer-desc">{{ drawer.description }}</p>
+        <p v-if="drawer.detail" class="muted mt-2">{{ drawer.detail }}</p>
+      </template>
+      <template #footer>
+        <button class="btn btn-lg btn-block" :disabled="!drawer || closed || outOfRange || drawer.status === 'OFFLINE'" @click="add(drawer); drawer = null">
+          <Icon name="plus" :size="18" :stroke="2.4" />{{ outOfRange ? '超配送范围不可下单' : (closed ? '商家休息中' : (drawer?.status === 'OFFLINE' ? '商品已下架' : '加入购物车')) }}
+        </button>
+      </template>
+    </BottomSheet>
+
+    <transition name="pop">
+      <div v-if="itemCount() && !closed && !outOfRange" class="cart-bar" role="button" tabindex="0" aria-label="去结算" @click="router.push('/checkout')" @keydown.enter="router.push('/checkout')">
+        <span class="cart-thumb" :class="{ bump }" @animationend="bump = false">
+          <img :src="imgSrc(cart.coverUrl || shop.coverUrl, cat, 'cart-cover', 'shop')" alt="" data-seed="cart-cover" :data-category="cat" @error="onImgError" />
+          <span class="cart-count num">{{ itemCount() }}</span>
+        </span>
+        <span class="cart-sum">
+          <b class="num">{{ yuan(goodsCents()) }}</b>
+          <small>另需配送费 · 结算时自动用最优券</small>
+        </span>
+        <span class="btn">去结算</span>
       </div>
-    </div>
-    <div v-if="itemCount() && !closed && !outOfRange" class="cart-bar" @click="router.push('/checkout')">
-      <img :src="imgSrc(cart.coverUrl || shop.coverUrl, shop.category || 'food', 'cart-cover', 'shop')" alt="" data-seed="cart-cover" :data-category="shop.category || 'food'" @error="onImgError" style="width:36px;height:36px;border-radius:10px;object-fit:cover" />
-      <div style="flex:1">已选 {{ itemCount() }} 件 · {{ yuan(goodsCents()) }}</div>
-      <b>去结算</b>
-    </div>
+    </transition>
   </div>
 </template>
+
+<style scoped>
+.shop-hero { position: relative; height: 230px; overflow: hidden; background: var(--ink-150); }
+.shop-cover { width: 100%; height: 100%; object-fit: cover; animation: hero-zoom 1.2s var(--ease-out) both; }
+.shop-cover.is-off { filter: grayscale(0.5) brightness(0.85); }
+.shop-hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 40%, rgba(0, 0, 0, 0.15)); pointer-events: none; }
+@keyframes hero-zoom { from { transform: scale(1.08); } to { transform: none; } }
+.shop-error { margin: 80px var(--gutter) 0; }
+
+.shop-info {
+  position: relative; z-index: 2;
+  margin: -44px var(--gutter) 0;
+  padding: 18px 18px 16px;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  animation: rise var(--dur-4) var(--ease-out) both;
+}
+.si-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.si-score { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; border-radius: var(--r-pill); background: var(--warning-50); color: var(--flame-600); font-family: var(--font-num); font-weight: 800; font-size: var(--fs-md); flex-shrink: 0; }
+.si-star { fill: #FFB300; color: #FFB300; }
+.si-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; font-size: var(--fs-sm); color: var(--text-3); }
+.si-meta i { width: 3px; height: 3px; border-radius: 50%; background: var(--ink-300); }
+.si-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.si-line { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; font-size: var(--fs-sm); color: var(--text-2); line-height: 1.5; }
+.si-line .ico { margin-top: 2px; color: var(--text-3); }
+
+.notice { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 14px; border-radius: var(--r-md); font-size: var(--fs-sm); font-weight: 650; }
+.notice.danger { background: var(--danger-50); color: var(--danger-600); }
+
+.shop-tabs {
+  position: sticky; top: 0; z-index: 5;
+  padding: 12px var(--gutter) 10px;
+  background: color-mix(in srgb, var(--canvas) 90%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.menu-board { display: flex; align-items: flex-start; }
+.menu-cats {
+  position: sticky; top: 60px;
+  width: 86px; flex-shrink: 0;
+  padding: 4px 0 24px;
+  display: flex; flex-direction: column;
+}
+.menu-cats button {
+  position: relative;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 12px 10px 12px 16px;
+  text-align: left;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+  transition: color var(--dur-2) ease, background var(--dur-2) ease;
+}
+.menu-cats button small { font-size: var(--fs-2xs); color: var(--text-3); font-family: var(--font-num); }
+.menu-cats button::before {
+  content: ""; position: absolute; left: 6px; top: 50%;
+  width: 3px; height: 0; border-radius: 3px;
+  background: var(--accent-grad);
+  transform: translateY(-50%);
+  transition: height var(--dur-3) var(--ease-out);
+}
+.menu-cats button.on { color: var(--text); font-weight: 800; background: var(--surface); border-radius: 0 14px 14px 0; box-shadow: var(--sh-1); }
+.menu-cats button.on::before { height: 18px; }
+.menu-pane { flex: 1; min-width: 0; padding: 0 var(--gutter) 0 10px; }
+.menu-group { scroll-margin-top: 70px; }
+.menu-group-title { font-size: var(--fs-sm); font-weight: 750; color: var(--text-2); margin: 10px 2px 8px; letter-spacing: 0.02em; }
+.sku {
+  display: flex; gap: 12px;
+  padding: 10px;
+  margin-bottom: 10px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  cursor: pointer;
+  transition: box-shadow var(--dur-3) ease, transform var(--dur-2) ease;
+}
+@media (hover: hover) { .sku:hover { box-shadow: var(--sh-2); } .sku:hover .sku-img img { transform: scale(1.06); } }
+.sku.highlight { box-shadow: 0 0 0 2px var(--accent), var(--sh-2); }
+.sku.off { opacity: 0.6; }
+.sku-img { width: 88px; height: 88px; border-radius: 14px; overflow: hidden; flex-shrink: 0; background: var(--ink-150); }
+.sku-img img { width: 100%; height: 100%; object-fit: cover; transition: transform var(--dur-4) var(--ease-out); }
+.sku-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sku-name { font-size: var(--fs-md); font-weight: 700; line-height: 1.3; }
+.sku-desc { font-size: var(--fs-xs); color: var(--text-3); margin-top: 3px; line-height: 1.45; }
+.sku-sales { font-size: var(--fs-2xs); color: var(--text-3); margin-top: 3px; }
+.sku-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; padding-top: 6px; }
+.sku-price { display: inline-flex; align-items: baseline; gap: 4px; }
+.sku-price b { font-size: var(--fs-lg); font-weight: 800; color: var(--flame-600); }
+.sku-price s { font-size: var(--fs-2xs); color: var(--text-3); }
+.sku-skel { display: flex; gap: 12px; padding: 10px; margin-bottom: 10px; border-radius: var(--r-lg); background: var(--surface); }
+
+.reviews { padding-top: 4px; }
+.review + .review { margin-top: 10px; }
+.rv-head { display: flex; gap: 10px; align-items: center; }
+.rv-ava { width: 38px; height: 38px; font-size: var(--fs-md); box-shadow: none; }
+.rv-content { margin-top: 10px; font-size: var(--fs-base); line-height: var(--lh-normal); }
+.rv-photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.rv-photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; }
+.rv-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.like {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  height: 30px; padding: 0 12px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-sm); font-weight: 700; color: var(--text-2);
+  background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--font-num);
+  transition: background var(--dur-2) ease, color var(--dur-2) ease, transform var(--dur-2) var(--ease-spring);
+}
+.like:active { transform: scale(0.9); }
+.like.on { background: var(--accent-soft); color: var(--accent-strong); box-shadow: none; }
+.like.on .ico { animation: badge-pop var(--dur-3) var(--ease-spring); }
+.list-status { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px 0; color: var(--text-3); font-size: var(--fs-sm); }
+
+.drawer-img { margin: 0 -20px; height: 240px; overflow: hidden; }
+.drawer-img img { width: 100%; height: 100%; object-fit: cover; }
+.drawer-price { font-size: var(--fs-2xl); font-weight: 800; color: var(--flame-600); }
+.drawer-desc { margin-top: 12px; font-size: var(--fs-base); line-height: var(--lh-normal); color: var(--text-2); }
+
+.cart-thumb.bump { animation: cart-bump 0.45s var(--ease-spring); }
+@keyframes cart-bump { 0% { transform: scale(1); } 40% { transform: scale(1.18) rotate(-6deg); } 100% { transform: scale(1); } }
+</style>

@@ -80,6 +80,9 @@ function axis(p, i) {
 
 <style scoped>
 .chart-wrap { position: relative; }
-.chart { width: 100%; height: 120px; color: #FF6A00; }
+.chart { width: 100%; height: 120px; color: var(--text-2); }
+.work-bar { fill: var(--brand-400); transform-origin: center bottom; transform-box: fill-box; animation: bar-rise .55s var(--ease-out) both; cursor: pointer; }
+.work-bar:hover { fill: var(--flame-400); }
+@keyframes bar-rise { from { transform: scaleY(0.05); } to { transform: none; } }
 .chart.compact { height: 72px; }
 </style>
